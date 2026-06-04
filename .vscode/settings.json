@@ -1,0 +1,24 @@
+{
+    "python.defaultInterpreterPath": "${env:CONDA_PREFIX}\\python.exe",
+    "python.condaPath": "conda",
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "tests/"
+    ],
+    "python.testing.unittestEnabled": false,
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.rulers": [
+            88
+        ]
+    },
+    "jupyter.kernelProviderFilter": {},
+    "jupyter.notebookFileRoot": "${workspaceFolder}",
+    "jupyter.debugJustMyCode": false,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/*.egg-info": true
+    }
+}

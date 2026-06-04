@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "python": "C:\\Users\\zepedro\\.conda\\envs\\analise_desempenho\\python.exe"
+        },
+        {
+            "name": "Python: Run Tests (pytest)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/",
+                "-v"
+            ],
+            "console": "integratedTerminal",
+            "python": "C:\\Users\\zepedro\\.conda\\envs\\analise_desempenho\\python.exe",
+            "justMyCode": false
+        }
+    ]
+}
