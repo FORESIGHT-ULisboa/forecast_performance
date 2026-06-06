@@ -37,12 +37,6 @@ From the repository root, run:
 pip install -e ".[dev]"
 ```
 
-This reads `pyproject.toml` and installs:
-* **Runtime** — `numpy`, `pandas`, `scipy`, `matplotlib`, `seaborn`
-* **Development** — `pytest`, `pytest-cov`, `jupyter`, `ipykernel`
-
-All packages ship pre-compiled Windows wheels; no compiler is required.
-
 ### 3  Register the Jupyter kernel
 
 So the notebooks pick up the right environment:

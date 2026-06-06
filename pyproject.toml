@@ -23,6 +23,8 @@ dev = [
     "pytest-cov>=4.0",
     "jupyter>=1.0",
     "ipykernel>=6.0",
+    "pyarrow",
+    "fastparquet",
 ]
 
 [tool.setuptools.packages.find]
