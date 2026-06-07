@@ -341,12 +341,35 @@ def plot_pd_ensemble(fig, df, production_dates=None, ensembles=None, **kwargs):
     '''
     Plots ensemble data by production date
     '''
+    df_ = df.copy()
 
-    pass
+    production_dates = kwargs.pop('production_datetimes', production_dates)
 
-def plot_lt_ensemble(fig, df, leadtimes=None, ensembles=None, **kwargs):
-    '''
-    Plots ensemble data by leadtime 
-    '''
+    col_names = list(df_.columns.names) if isinstance(df_.columns, pd.MultiIndex) else []
 
-    pass
+    if production_dates is not None:
+        df_ = df_.loc[df_.index.get_level_values('production_datetime').isin(production_dates), :]
+
+    if ensembles is not None:
+        df_ = df_.loc[df_.index.get_level_values('ensemble_member').isin(ensembles), :]
+
+    if 'leadtime' in df_.index.names:
+        df_ = df_.droplevel('leadtime')
+
+    df_ = df_.unstack(['production_datetime', 'ensemble_member'])
+    df_ = df_.dropna(how='all')
+
+    colors_alias = kwargs.pop('colors', None)
+    colorscale = kwargs.pop('colorscale', colors_alias)
+    color_loops = kwargs.pop('color_loops', 1)
+
+    add_line_traces(
+        fig,
+        df_,
+        columns=df_.columns,
+        showlegend=False,
+        colorscale=colorscale,
+        color_loops=color_loops,
+        **kwargs,
+    )
+    return fig

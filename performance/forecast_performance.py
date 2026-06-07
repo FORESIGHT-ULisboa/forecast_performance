@@ -59,27 +59,27 @@ class ForecastPerformance:
     @staticmethod
     def production_to_event_dates(data):
         """Shift a production-date-indexed DataFrame to event dates."""
-        leadtimes = data.columns.get_level_values("Leadtime")
+        leadtimes = data.columns.get_level_values("leadtime")
         data_ = []
         for i0 in range(data.shape[1]):
             tmp = data.iloc[:, [i0]].copy()
             tmp.index = tmp.index + leadtimes[i0]
             data_.append(tmp)
         data_ = pd.concat(data_, axis=1)
-        data_.index.name = "Event date"
+        data_.index.name = "event_datetime"
         return data_
 
     @staticmethod
     def event_to_production_dates(data):
         """Shift an event-date-indexed DataFrame back to production dates."""
-        leadtimes = data.columns.get_level_values("Leadtime")
+        leadtimes = data.columns.get_level_values("leadtime")
         data_ = []
         for i0 in range(data.shape[1]):
             tmp = data.iloc[:, [i0]].copy()
             tmp.index = tmp.index - leadtimes[i0]
             data_.append(tmp)
         data_ = pd.concat(data_, axis=1)
-        data_.index.name = "Production date"
+        data_.index.name = "production_datetime"
         return data_
 
     def add_by_production_date(self, *args, **kwargs):
@@ -99,7 +99,7 @@ class ForecastPerformance:
         ----------
         data : pd.DataFrame
             Production-date-indexed DataFrame.  Columns may carry a MultiIndex
-            with levels ``Leadtime``, ``Probability``, or ``Ensemble member``.
+            with levels ``leadtime``, ``non_exceedance``, or ``Ensemble member``.
         name : str
             Identifier for this simulation.
         leadtime : timedelta, optional
@@ -108,9 +108,9 @@ class ForecastPerformance:
             Whether to sort quantile forecasts to ensure non-decreasing order.
         """
         data = data.copy(deep=True)
-        # Set the index name early so stack/unstack("Production date") works
+        # Set the index name early so stack/unstack("production_datetime") works
         # regardless of whether the caller named the index.
-        data.index.name = "Production date"
+        data.index.name = "production_datetime"
         try:
             data.columns = data.columns.remove_unused_levels()
         except AttributeError:
@@ -119,35 +119,35 @@ class ForecastPerformance:
         if not isinstance(data.columns, pd.MultiIndex):
             data.columns = pd.MultiIndex.from_frame(data.columns.to_frame())
 
-        if "Leadtime" not in data.columns.names:
+        if "leadtime" not in data.columns.names:
             leadtimes = [leadtime]
         else:
-            leadtimes = data.columns.get_level_values("Leadtime").unique()
+            leadtimes = data.columns.get_level_values("leadtime").unique()
 
         if (
-            "Probability" not in data.columns.names
-            and "Ensemble member" not in data.columns.names
+            "non_exceedance" not in data.columns.names
+            and "ensemble_member" not in data.columns.names
         ) or data.shape[1] / len(leadtimes) == 1:
             simulation_type = "simple"
             probabilities = [1]
 
-        elif "Ensemble member" in data.columns.names:
+        elif "ensemble_member" in data.columns.names:
             simulation_type = "ensemble"
-            n = data.columns.get_level_values("Ensemble member").unique().shape[0]
+            n = data.columns.get_level_values("ensemble_member").unique().shape[0]
             probabilities = np.cumsum(np.array([1.0 / n] * n))
             try:
-                ens_inx = list(data.columns.names).index("Ensemble member")
+                ens_inx = list(data.columns.names).index("ensemble_member")
                 tmp = data.columns.levels[ens_inx]
                 tmp = [int(i) for i in tmp]
                 data.columns = data.columns.set_levels(tmp, level=ens_inx)
             except Exception:
                 pass
-            data.sort_index(axis=1, level="Ensemble member", inplace=True)
+            data.sort_index(axis=1, level="ensemble_member", inplace=True)
 
-        elif "Probability" in data.columns.names:
+        elif "non_exceedance" in data.columns.names:
             simulation_type = "probabilistic"
             try:
-                prob_inx = list(data.columns.names).index("Probability")
+                prob_inx = list(data.columns.names).index("non_exceedance")
                 probabilities = data.columns.levels[prob_inx]
                 if isinstance(probabilities[0], str) and "%" in probabilities[0]:
                     probabilities = probabilities.str.replace("%", "").map(
@@ -157,14 +157,14 @@ class ForecastPerformance:
                 data.columns = data.columns.set_levels(probabilities, level=prob_inx)
             except Exception:
                 pass
-            data.sort_index(axis=1, level=["Probability"], inplace=True)
+            data.sort_index(axis=1, level=["non_exceedance"], inplace=True)
 
             if sort:
-                tmp = data.stack("Probability").unstack("Production date")
+                tmp = data.stack("non_exceedance").unstack("production_datetime")
                 tmp = pd.DataFrame(
                     np.sort(tmp.values, axis=0), index=tmp.index, columns=tmp.columns
                 )
-                data = tmp.stack("Production date").unstack("Probability")
+                data = tmp.stack("production_datetime").unstack("non_exceedance")
         else:
             raise Exception("Problem identifying the type of simulation…")
 
@@ -175,21 +175,21 @@ class ForecastPerformance:
                 % (str(data.shape), len(leadtimes), len(probabilities))
             )
 
-        data.index.name = "Production date"
+        data.index.name = "production_datetime"
 
         if len(data.columns.levels) == 1:
             data = pd.concat([data], keys=[0], names=["Dummy"], axis=1)
 
         leadtimes = self._convert_leadtimes(leadtimes)
 
-        if "Leadtime" not in data.columns.names:
+        if "leadtime" not in data.columns.names:
             tmp = data.columns.to_frame()
             if len(leadtimes) > 1:
                 raise Exception("Please check leadtimes…")
-            tmp.loc[:, "Leadtime"] = leadtimes[0]
+            tmp.loc[:, "leadtime"] = leadtimes[0]
             data.columns = pd.MultiIndex.from_frame(tmp)
 
-        lt_inx = list(data.columns.names).index("Leadtime")
+        lt_inx = list(data.columns.names).index("leadtime")
         tmp = data.columns.levels[lt_inx]
         data.columns = data.columns.set_levels(
             self._convert_leadtimes(tmp), level=lt_inx
@@ -216,7 +216,7 @@ class ForecastPerformance:
             leadtimes.append(self.simulations[s0]['leadtimes'])
             leadtime_idx.update(leadtimes[-1])
 
-        table = pd.DataFrame(False, index=pd.TimedeltaIndex(np.unique(list(leadtime_idx)), name='Leadtime'), columns=names)
+        table = pd.DataFrame(False, index=pd.TimedeltaIndex(np.unique(list(leadtime_idx)), name='leadtime'), columns=names)
         for i0, s0 in enumerate(names):
             table.loc[table.index.isin(leadtimes[i0]), s0] = True
         return table
@@ -295,8 +295,8 @@ class ForecastPerformance:
     def get_persistence(self, leadtimes):
         """Return a persistence forecast for the given leadtimes."""
         persistence = pd.concat([self.reference] * len(leadtimes), axis=1)
-        persistence.columns = pd.Index(leadtimes, name="Leadtime")
-        persistence.index.names = ["Production date"]
+        persistence.columns = pd.Index(leadtimes, name="leadtime")
+        persistence.index.names = ["production_datetime"]
         return persistence
 
     def get_climatology(
@@ -380,12 +380,12 @@ class ForecastPerformance:
             climatology_.append(tmp)
         climatology = pd.concat(climatology_, axis=1)
         climatology.columns = pd.MultiIndex.from_product(
-            [leadtimes, probabilities], names=["Leadtime", "Probability"]
+            [leadtimes, probabilities], names=["leadtime", "non_exceedance"]
         )
 
         climatology[climatology < minimum] = minimum
         climatology[climatology > maximum] = maximum
-        climatology.index.names = ["Production date"]
+        climatology.index.names = ["production_datetime"]
         return climatology
 
     # ------------------------------------------------------------------
@@ -416,7 +416,7 @@ class ForecastPerformance:
         if len(quantile_losses) > 1:
             return pd.DataFrame(
                 quantile_losses,
-                index=pd.Index(leadtimes, name="Leadtime"),
+                index=pd.Index(leadtimes, name="leadtime"),
                 columns=pd.Index([name], name="Quantile loss"),
             ).transpose()
         return quantile_losses[0]
@@ -526,6 +526,7 @@ class ForecastPerformance:
 
         Values closer to 1 indicate better calibration.
         """
+        
         leadtimes = self._convert_leadtimes(leadtimes)
         alphas = []
         for leadtime in leadtimes:
@@ -538,7 +539,7 @@ class ForecastPerformance:
         if len(alphas) > 1:
             return pd.DataFrame(
                 alphas,
-                index=pd.Index(leadtimes, name="Leadtime"),
+                index=pd.Index(leadtimes, name="leadtime"),
                 columns=pd.Index([name], name="Reliability"),
             ).transpose()
         return alphas[0]
@@ -599,7 +600,7 @@ class ForecastPerformance:
         if len(pis) > 1:
             return pd.DataFrame(
                 pis,
-                index=pd.Index(leadtimes, name="Leadtime"),
+                index=pd.Index(leadtimes, name="leadtime"),
                 columns=pd.Index([name], name=metric),
             ).transpose()
         return pis[0]
@@ -697,7 +698,7 @@ class ForecastPerformance:
                 means,
                 index=data.index,
                 columns=pd.MultiIndex.from_tuples(
-                    [(name, leadtime)], names=["Name", "Leadtime"]
+                    [(name, leadtime)], names=["Name", "leadtime"]
                 ),
             )
         return None
@@ -753,26 +754,26 @@ class ForecastPerformance:
         seaborn_df = self._getSeaborn(name)
 
         if production_dates is None:
-            production_dates = seaborn_df["Production date"].unique()
+            production_dates = seaborn_df["production_datetime"].unique()
 
-        seaborn_df = seaborn_df.loc[seaborn_df["Production date"].isin(production_dates), :]
+        seaborn_df = seaborn_df.loc[seaborn_df["production_datetime"].isin(production_dates), :]
         key = seaborn_df.columns[3]
-        seaborn_df = seaborn_df.sort_values(by=[key, "Production date", "Leadtime"])
+        seaborn_df = seaborn_df.sort_values(by=[key, "production_datetime", "leadtime"])
         seaborn_df = seaborn_df.loc[
-            (seaborn_df["Production date"] >= date_from)
-            & (seaborn_df["Production date"] <= date_to), :
+            (seaborn_df["production_datetime"] >= date_from)
+            & (seaborn_df["production_datetime"] <= date_to), :
         ]
-        seaborn_df = seaborn_df.sort_values(by="Production date")
+        seaborn_df = seaborn_df.sort_values(by="production_datetime")
 
         if estimator:
             ax = sns.lineplot(
-                x="Event date", y="Variable", hue="Production date",
+                x="event_datetime", y="variable", hue="production_datetime",
                 errorbar=errorbar, data=seaborn_df, palette=palette,
                 ax=ax, estimator=estimator,
             )
         else:
             ax = sns.lineplot(
-                x="Event date", y="Variable", hue="Production date",
+                x="event_datetime", y="variable", hue="production_datetime",
                 units=key, errorbar=errorbar, data=seaborn_df, palette=palette,
                 ax=ax, estimator=estimator,
             )
@@ -832,27 +833,27 @@ class ForecastPerformance:
 
         seaborn_df = self._getSeaborn(name)
         seaborn_df = seaborn_df.loc[
-            (seaborn_df["Event date"] >= date_from)
-            & (seaborn_df["Event date"] <= date_to), :
+            (seaborn_df["event_datetime"] >= date_from)
+            & (seaborn_df["event_datetime"] <= date_to), :
         ]
 
-        seaborn_ = seaborn_df.loc[seaborn_df["Leadtime"].map(lambda x: x in leadtimes), :]
+        seaborn_ = seaborn_df.loc[seaborn_df["leadtime"].map(lambda x: x in leadtimes), :]
         if seaborn_.shape[0] == 0 and len(leadtimes) == 1:
             if leadtimes[0] == pd.DateOffset(days=0):
-                seaborn_ = seaborn_df.loc[seaborn_df["Leadtime"] == pd.Timedelta("0H"), :]
+                seaborn_ = seaborn_df.loc[seaborn_df["leadtime"] == pd.Timedelta("0H"), :]
             elif leadtimes[0] == pd.Timedelta("0H"):
-                seaborn_ = seaborn_df.loc[seaborn_df["Leadtime"] == pd.DateOffset(days=0), :]
+                seaborn_ = seaborn_df.loc[seaborn_df["leadtime"] == pd.DateOffset(days=0), :]
 
         seaborn_df = seaborn_.copy()
-        seaborn_df.loc[:, "Leadtime"] = seaborn_df["Leadtime"].map(str)
-        seaborn_df = seaborn_df.sort_values(by="Leadtime")
+        seaborn_df.loc[:, "leadtime"] = seaborn_df["leadtime"].map(str)
+        seaborn_df = seaborn_df.sort_values(by="leadtime")
 
         ax = sns.lineplot(
-            x="Event date", y="Variable", hue="Leadtime",
+            x="event_datetime", y="variable", hue="leadtime",
             errorbar=errorbar, data=seaborn_df, palette=palette, ax=ax, zorder=3,
         )
         if reference:
-            tmp_years = pd.DatetimeIndex(seaborn_df["Event date"]).year
+            tmp_years = pd.DatetimeIndex(seaborn_df["event_datetime"]).year
             tmp = self.reference.loc[
                 (self.reference.index.year >= tmp_years.min())
                 & (self.reference.index.year <= tmp_years.max()), :
@@ -917,12 +918,12 @@ class ForecastPerformance:
             except Exception:
                 pass
 
-        seaborn_df.columns = ["Variable"]
+        seaborn_df.columns = ["variable"]
         seaborn_df = seaborn_df.reset_index()
-        if "Leadtime" not in seaborn_df.columns:
-            seaborn_df.loc[:, "Leadtime"] = self.simulations[name]["leadtimes"][0]
-        seaborn_df.loc[:, "Event date"] = (
-            seaborn_df["Production date"] + seaborn_df["Leadtime"]
+        if "leadtime" not in seaborn_df.columns:
+            seaborn_df.loc[:, "leadtime"] = self.simulations[name]["leadtimes"][0]
+        seaborn_df.loc[:, "event_datetime"] = (
+            seaborn_df["production_datetime"] + seaborn_df["leadtime"]
         )
         self.results[name]["seaborn"] = seaborn_df
         return seaborn_df
@@ -980,19 +981,19 @@ class ForecastPerformance:
         Fix: work on a copy so the original index is never mutated in-place.
         """
         if leadtime is not None:
-            data_ = data.loc[:, data.columns.get_level_values("Leadtime") == leadtime]
+            data_ = data.loc[:, data.columns.get_level_values("leadtime") == leadtime]
             if data_.shape[1] == 0:
                 if leadtime == pd.DateOffset(days=0):
                     data_ = data.loc[
-                        :, data.columns.get_level_values("Leadtime") == pd.Timedelta("0H")
+                        :, data.columns.get_level_values("leadtime") == pd.Timedelta("0H")
                     ]
                 elif leadtime == pd.Timedelta("0H"):
                     data_ = data.loc[
-                        :, data.columns.get_level_values("Leadtime") == pd.DateOffset(days=0)
+                        :, data.columns.get_level_values("leadtime") == pd.DateOffset(days=0)
                     ]
             data = data_.copy()          # fix: copy before mutating index
             data.index = data.index + leadtime
-            data.index.name = "Event date"
+            data.index.name = "event_datetime"
 
         if drop_redundant and isinstance(data.columns, pd.MultiIndex):
             for c0 in range(len(data.columns.levels) - 1, -1, -1):
@@ -1006,6 +1007,6 @@ class ForecastPerformance:
 
     def _setLeadtime(self, data, name, leadtime):
         """Overwrite the stored data for a specific leadtime."""
-        lt_idx = list(self.simulations[name]["data"].columns.names).index("Leadtime")
+        lt_idx = list(self.simulations[name]["data"].columns.names).index("leadtime")
         index = tuple([slice(None)] * lt_idx + [leadtime])
         self.simulations[name]["data"].loc[:, index] = data.values
