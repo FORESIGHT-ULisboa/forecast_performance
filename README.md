@@ -47,13 +47,16 @@ python -m ipykernel install --user --name forecast_performance --display-name "f
 
 ### 4  Open the notebooks
 
+
+```bat
+Open them directly in VS Code — select the **forecast_performance** kernel in the top-right kernel picker
+```
+
+or type
+
 ```bat
 jupyter lab notebooks\
 ```
-
-Or open them directly in VS Code — select the **forecast_performance** kernel in the top-right kernel picker.
-
----
 
 ## Quick start
 

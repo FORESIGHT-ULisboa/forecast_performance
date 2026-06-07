@@ -15,6 +15,9 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "seaborn>=0.12",
+    "ipympl",
+    "ipywidgets",
+    "plotly",
 ]
 
 [project.optional-dependencies]
