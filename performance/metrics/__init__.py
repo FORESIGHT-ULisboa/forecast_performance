@@ -35,4 +35,12 @@ from .probabilistic import (  # noqa: F401
     crps_ensemble_integral,
     crps_probabilistic_integral,
     fair_crps_ensemble_spread,
+    crps,
+    fair_crps,
+    reliability,
+    resolution,
+    brier_score,
+    fair_brier_score,
+    fair_crps_skill_score,
+    fair_brier_skill_score,
 )

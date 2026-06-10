@@ -26,6 +26,14 @@ from .metrics import (                                  # noqa: F401
     p_values_ensemble, p_values_probabilistic,
     crps_ensemble_integral, crps_probabilistic_integral,
     fair_crps_ensemble_spread,
+    crps,
+    fair_crps,
+    reliability,
+    resolution,
+    brier_score,
+    fair_brier_score,
+    fair_crps_skill_score,
+    fair_brier_skill_score,
 )
 
 __version__ = "0.4.0"
@@ -42,4 +50,12 @@ __all__ = [
     "p_values_ensemble", "p_values_probabilistic",
     "crps_ensemble_integral", "crps_probabilistic_integral",
     "fair_crps_ensemble_spread",
+    "crps",
+    "fair_crps",
+    "reliability",
+    "resolution",
+    "brier_score",
+    "fair_brier_score",
+    "fair_crps_skill_score",
+    "fair_brier_skill_score",
 ]

@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from performance import ForecastPerformance, rmse, mae
+from performance.metrics import probabilistic as prob_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -78,42 +79,50 @@ class TestDeterministic:
 
 class TestCRPS:
     def test_ensemble_crps_positive(self, fp_ensemble):
-        crps = fp_ensemble.CRPS("ens", leadtime=pd.Timedelta("0D"))
+        crps = fp_ensemble.probabilistic(
+            prob_metrics.crps,
+            "ens",
+            leadtime=pd.Timedelta("0D"),
+        )
         assert crps > 0.0
 
     def test_probabilistic_crps_positive(self, fp_probabilistic):
-        crps = fp_probabilistic.CRPS("prob", leadtime=pd.Timedelta("0D"))
+        crps = fp_probabilistic.probabilistic(
+            prob_metrics.crps,
+            "prob",
+            leadtime=pd.Timedelta("0D"),
+        )
         assert crps > 0.0
 
     def test_simple_crps_equals_mae(self, fp_simple):
         """For a deterministic forecast, CRPS equals MAE."""
-        crps = fp_simple.CRPS("unbiased", leadtime=None)
+        crps = fp_simple.probabilistic(prob_metrics.crps, "unbiased", leadtime=None)
         mae_val = fp_simple.deterministic(mae, "unbiased")
         assert abs(crps - mae_val) < 1e-10
 
     def test_crps_cached(self, fp_ensemble):
-        """Second call with same args must return cached value (no recomputation)."""
+        """Second call should hit cached p-values for identical arguments."""
         lt = pd.Timedelta("0D")
-        # Prime the cache
-        first = fp_ensemble.CRPS("ens", leadtime=lt)
-        # Patch the internal computation method to detect if it runs again
+        first = fp_ensemble.probabilistic(prob_metrics.crps, "ens", leadtime=lt)
         with mock.patch.object(
-            fp_ensemble,
-            "_p_values",
-            wraps=fp_ensemble._p_values,
+            prob_metrics,
+            "p_values_ensemble",
+            wraps=prob_metrics.p_values_ensemble,
         ) as mock_pv:
-            second = fp_ensemble.CRPS("ens", leadtime=lt)
-            # Cache hit → _p_values should NOT be called
+            second = fp_ensemble.probabilistic(prob_metrics.crps, "ens", leadtime=lt)
             mock_pv.assert_not_called()
         assert abs(first - second) < 1e-12
 
     def test_crps_months_bypasses_cache(self, fp_ensemble):
-        """Calling CRPS with months= should always recompute (no caching)."""
+        """Calling with months returns a finite filtered score."""
         lt = pd.Timedelta("0D")
-        # Fill cache
-        fp_ensemble.CRPS("ens", leadtime=lt)
-        # Call with months — should not use cache
-        result = fp_ensemble.CRPS("ens", leadtime=lt, months=[1, 2, 3])
+        fp_ensemble.probabilistic(prob_metrics.crps, "ens", leadtime=lt)
+        result = fp_ensemble.probabilistic(
+            prob_metrics.crps,
+            "ens",
+            leadtime=lt,
+            months=[1, 2, 3],
+        )
         assert np.isfinite(result)
 
 
@@ -126,14 +135,18 @@ class TestFairCRPS:
     def test_fair_le_crps_for_ensemble(self, fp_ensemble):
         """Fair CRPS <= CRPS for ensemble forecasts."""
         lt = pd.Timedelta("0D")
-        crps = fp_ensemble.CRPS("ens", leadtime=lt)
-        fair = fp_ensemble.fairCRPS("ens", leadtime=lt)
+        crps = fp_ensemble.probabilistic(prob_metrics.crps, "ens", leadtime=lt)
+        fair = fp_ensemble.probabilistic(prob_metrics.fair_crps, "ens", leadtime=lt)
         assert fair <= crps + 1e-10
 
     def test_fair_equals_crps_for_simple(self, fp_simple):
         """Fair CRPS == CRPS for deterministic forecasts."""
-        crps = fp_simple.CRPS("unbiased", leadtime=None)
-        fair = fp_simple.fairCRPS("unbiased", leadtime=None)
+        crps = fp_simple.probabilistic(prob_metrics.crps, "unbiased", leadtime=None)
+        fair = fp_simple.probabilistic(
+            prob_metrics.fair_crps,
+            "unbiased",
+            leadtime=None,
+        )
         assert abs(crps - fair) < 1e-10
 
 
@@ -146,12 +159,22 @@ class TestBrierS:
     def test_range_01(self, fp_ensemble):
         lt = pd.Timedelta("0D")
         threshold = 52.0  # above mean of reference
-        bs = fp_ensemble.BrierS("ens", threshold=threshold, leadtime=lt)
+        bs = fp_ensemble.probabilistic(
+            prob_metrics.brier_score,
+            "ens",
+            leadtime=lt,
+            metric_kwargs={"threshold": threshold},
+        )
         assert 0.0 <= bs <= 1.0
 
     def test_return_p_values(self, fp_ensemble):
         lt = pd.Timedelta("0D")
-        bs, pv = fp_ensemble.BrierS("ens", threshold=50.0, leadtime=lt, returnPValues=True)
+        bs, pv = fp_ensemble.probabilistic(
+            prob_metrics.brier_score,
+            "ens",
+            leadtime=lt,
+            metric_kwargs={"threshold": 50.0, "return_p_values": True},
+        )
         assert isinstance(pv, pd.DataFrame)
         assert np.all(pv.values >= 0) and np.all(pv.values <= 1)
 
@@ -163,22 +186,38 @@ class TestBrierS:
 
 class TestReliabilityResolution:
     def test_reliability_range(self, fp_ensemble):
-        alpha = fp_ensemble.reliability("ens", leadtimes=pd.Timedelta("0D"))
+        alpha = fp_ensemble.probabilistic(
+            prob_metrics.reliability,
+            "ens",
+            leadtime=pd.Timedelta("0D"),
+        )
         assert -1.0 <= alpha <= 1.0
 
     def test_resolution_positive(self, fp_ensemble):
-        res = fp_ensemble.resolution("ens", leadtimes=pd.Timedelta("0D"))
+        res = fp_ensemble.probabilistic(
+            prob_metrics.resolution,
+            "ens",
+            leadtime=pd.Timedelta("0D"),
+        )
         assert res > 0.0
 
     def test_resolution_relative_positive(self, fp_ensemble):
-        res = fp_ensemble.resolution_relative("ens", leadtimes=pd.Timedelta("0D"))
+        res = fp_ensemble.probabilistic(
+            "resolution_relative",
+            "ens",
+            leadtime=pd.Timedelta("0D"),
+        )
         assert res > 0.0
 
-    def test_multiple_leadtimes_returns_dataframe(self, fp_multi_leadtime):
+    def test_iterable_leadtime_raises(self, fp_multi_leadtime):
         lt0 = pd.Timedelta("0D")
         lt1 = pd.Timedelta("1D")
-        alpha = fp_multi_leadtime.reliability("ens_multi", leadtimes=[lt0, lt1])
-        assert isinstance(alpha, pd.DataFrame)
+        with pytest.raises(Exception):
+            fp_multi_leadtime.probabilistic(
+                prob_metrics.reliability,
+                "ens_multi",
+                leadtime=[lt0, lt1],
+            )
 
 
 # ---------------------------------------------------------------------------

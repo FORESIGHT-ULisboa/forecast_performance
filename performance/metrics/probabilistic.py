@@ -14,6 +14,7 @@ Shapes
 """
 
 import numpy as np
+from typing import Optional
 
 
 # ---------------------------------------------------------------------------
@@ -259,3 +260,153 @@ def fair_crps_ensemble_spread(
             * (sorted_sims[:, i + 1] - sorted_sims[:, i])
         )
     return np.sum(spread, axis=1) / (n_members - 1)
+
+
+# ---------------------------------------------------------------------------
+# Unified single-leadtime metric wrappers
+# ---------------------------------------------------------------------------
+
+
+def crps(
+    simulations: np.ndarray,
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    simulation_type: str,
+    p_values: Optional[np.ndarray] = None,
+) -> float:
+    """Return mean CRPS for one leadtime slice."""
+    simulations = np.asarray(simulations, dtype=float)
+    probabilities = np.asarray(probabilities, dtype=float)
+    targets = np.asarray(targets, dtype=float).reshape(-1, 1)
+
+    if simulation_type == "ensemble":
+        if p_values is None:
+            p_values = p_values_ensemble(simulations, probabilities, targets)
+        p_values = np.asarray(p_values, dtype=float).reshape(-1, 1)
+        values = crps_ensemble_integral(simulations, probabilities, targets, p_values)
+        return float(np.mean(values))
+
+    if simulation_type == "probabilistic":
+        if probabilities[0] != 0 or probabilities[-1] != 1:
+            probs_c = probabilities.copy()
+            sims_c = simulations.copy()
+            if probabilities[0] != 0:
+                probs_c = np.r_[0.0, probs_c]
+                sims_c = np.c_[sims_c[:, 0], sims_c]
+            if probabilities[-1] != 1:
+                probs_c = np.r_[probs_c, 1.0]
+                sims_c = np.c_[sims_c, sims_c[:, -1]]
+        else:
+            probs_c = probabilities
+            sims_c = simulations
+
+        if p_values is None:
+            p_values = p_values_probabilistic(simulations, probabilities, targets)
+        p_values = np.asarray(p_values, dtype=float).reshape(-1, 1)
+        values = crps_probabilistic_integral(sims_c, probs_c, targets, p_values)
+        return float(np.mean(values))
+
+    if simulation_type == "simple":
+        return float(np.mean(np.abs(simulations - targets)))
+
+    raise Exception("Unknown simulation type: %s" % simulation_type)
+
+
+def fair_crps(
+    simulations: np.ndarray,
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    simulation_type: str,
+    p_values: Optional[np.ndarray] = None,
+) -> float:
+    """Return mean fair CRPS for one leadtime slice."""
+    score = crps(
+        simulations,
+        probabilities,
+        targets,
+        simulation_type=simulation_type,
+        p_values=p_values,
+    )
+    if simulation_type != "ensemble":
+        return score
+
+    spread = fair_crps_ensemble_spread(simulations, probabilities)
+    return float(score - np.mean(spread))
+
+
+def reliability(p_values: np.ndarray) -> float:
+    """Return reliability alpha score from PIT p-values."""
+    p_values = np.asarray(p_values, dtype=float).ravel()
+    sorted_pv = np.sort(p_values)
+    uniform = np.linspace(0, 1, sorted_pv.size)
+    alpha_prime = np.abs(sorted_pv - uniform).mean()
+    return float(1.0 - 2.0 * alpha_prime)
+
+
+def resolution(
+    simulations: np.ndarray,
+    probabilities: np.ndarray,
+    simulation_type: str,
+    relative: bool = False,
+) -> float:
+    """Return forecast resolution (sharpness) for one leadtime slice."""
+    simulations = np.asarray(simulations, dtype=float)
+    probabilities = np.asarray(probabilities, dtype=float)
+
+    if simulation_type == "probabilistic":
+        probs = np.diff(np.unique(np.r_[0, probabilities, 1]))
+        probs = np.tile(probs, (simulations.shape[0], 1))
+        intermediate = np.c_[
+            simulations[:, [0]],
+            simulations[:, :-1] + np.diff(simulations, axis=1) / 2,
+            simulations[:, [-1]],
+        ]
+        means = np.sum(probs * intermediate, axis=1)
+        means_ = np.tile(means, (probs.shape[1], 1)).T
+        stds = np.sqrt(np.sum(np.square(intermediate - means_) * probs, axis=1))
+    elif simulation_type == "ensemble":
+        means = simulations.mean(axis=1)
+        stds = simulations.std(axis=1, ddof=0)
+    else:
+        return float(np.inf)
+
+    if relative:
+        return float(np.mean(means / stds))
+    return float(np.mean(1.0 / stds))
+
+
+def brier_score(
+    p_values: np.ndarray,
+    targets: np.ndarray,
+    threshold: float,
+) -> float:
+    """Return mean Brier score for a threshold exceedance event."""
+    p_values = np.asarray(p_values, dtype=float).reshape(-1, 1)
+    targets = np.asarray(targets, dtype=float).reshape(-1, 1)
+    heaviside = np.heaviside(threshold - targets, 1)
+    return float(np.mean(np.square(p_values - heaviside)))
+
+
+def fair_brier_score(
+    p_values: np.ndarray,
+    targets: np.ndarray,
+    threshold: float,
+    n_members: int,
+) -> float:
+    """Return fair Brier score for ensembles."""
+    score = brier_score(p_values, targets, threshold)
+    if n_members <= 1:
+        return score
+    p_values = np.asarray(p_values, dtype=float).reshape(-1, 1)
+    correction = np.mean(p_values * (1.0 - p_values) / (n_members - 1))
+    return float(score - correction)
+
+
+def fair_crps_skill_score(score: float, score_reference: float) -> float:
+    """Return fair CRPS skill score against a reference forecast."""
+    return float(1.0 - score / score_reference)
+
+
+def fair_brier_skill_score(score: float, score_reference: float) -> float:
+    """Return fair Brier skill score against a reference forecast."""
+    return float(1.0 - score / score_reference)

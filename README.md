@@ -101,7 +101,7 @@ quantile_df = pd.DataFrame(
 )
 
 fp.add_by_production_date(quantile_df, name="prob_model")
-print("CRPS:", fp.CRPS("prob_model", leadtime=pd.Timedelta("0D")))
+print("CRPS:", fp.probabilistic("crps", "prob_model", leadtime=pd.Timedelta("0D")))
 ```
 
 ### Ensemble forecast
@@ -118,8 +118,7 @@ ensemble_df = pd.DataFrame(
 )
 
 fp.add_by_production_date(ensemble_df, name="ens_model")
-print("Fair CRPS:", fp.fairCRPS("ens_model", reference="ens_model",
-                                leadtime=pd.Timedelta("0D")))
+print("Fair CRPS:", fp.probabilistic("fair_crps", "ens_model", leadtime=pd.Timedelta("0D")))
 ```
 
 ---
@@ -170,12 +169,7 @@ pytest tests/ -v
 | `add_by_production_date(data, name)` | Register a simulation keyed by production date |
 | `add_by_event_date(data, name)` | Register a simulation keyed by event date |
 | `deterministic(metric, name, leadtime)` | Apply any metric function to the expected forecast |
-| `CRPS(name, leadtime, ...)` | Continuous Ranked Probability Score |
-| `fairCRPS(name, reference, leadtime)` | Fair CRPSS relative to a reference simulation |
-| `BrierS(name, threshold, leadtime)` | Brier score for threshold exceedance |
-| `fairBrierS(name, threshold, leadtime)` | Fair Brier skill score |
-| `reliability(name, leadtimes)` | Reliability index (calibration) |
-| `resolution(name, leadtimes)` | Resolution / sharpness |
+| `probabilistic(metric, name, leadtime, metric_kwargs=None, months=None)` | Unified wrapper for probabilistic metrics (CRPS, fair CRPS, Brier, reliability, resolution, skill scores) |
 | `get_expected_value(name, leadtime)` | Ensemble/quantile mean as a Series |
 | `adjustMean(name)` | Add bias-corrected copy |
 | `adjustScale(name)` | Add spread-corrected copy |

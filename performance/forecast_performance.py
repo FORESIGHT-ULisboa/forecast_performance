@@ -1,5 +1,5 @@
-"""
-ForecastPerformance — main class for evaluating deterministic and
+﻿"""
+ForecastPerformance - main class for evaluating deterministic and
 probabilistic weather / hydrological forecasts.
 """
 
@@ -119,6 +119,22 @@ class ForecastPerformance:
         if not isinstance(data.columns, pd.MultiIndex):
             data.columns = pd.MultiIndex.from_frame(data.columns.to_frame())
 
+        # Normalise common column-level aliases (e.g. "Leadtime", "Probability").
+        canonical = {
+            "leadtime": "leadtime",
+            "non_exceedance": "non_exceedance",
+            "probability": "non_exceedance",
+            "ensemble_member": "ensemble_member",
+        }
+        normalised_names = []
+        for level_name in data.columns.names:
+            if level_name is None:
+                normalised_names.append(level_name)
+                continue
+            key = str(level_name).strip().lower().replace(" ", "_")
+            normalised_names.append(canonical.get(key, key))
+        data.columns = data.columns.set_names(normalised_names)
+
         if "leadtime" not in data.columns.names:
             leadtimes = [leadtime]
         else:
@@ -166,7 +182,7 @@ class ForecastPerformance:
                 )
                 data = tmp.stack("production_datetime").unstack("non_exceedance")
         else:
-            raise Exception("Problem identifying the type of simulation…")
+            raise Exception("Problem identifying the type of simulation...")
 
         if data.shape[1] != len(leadtimes) * len(probabilities):
             raise Exception(
@@ -185,7 +201,7 @@ class ForecastPerformance:
         if "leadtime" not in data.columns.names:
             tmp = data.columns.to_frame()
             if len(leadtimes) > 1:
-                raise Exception("Please check leadtimes…")
+                raise Exception("Please check leadtimes...")
             tmp.loc[:, "leadtime"] = leadtimes[0]
             data.columns = pd.MultiIndex.from_frame(tmp)
 
@@ -392,283 +408,204 @@ class ForecastPerformance:
     # Probabilistic metrics
     # ------------------------------------------------------------------
 
-    def quantile_loss(self, name, leadtimes):
-        """
-        Mean quantile (pinball) loss.
+    def _resolve_probabilistic_metric(self, metric):
+        """Map metric callables and aliases to a canonical metric key."""
+        if callable(metric):
+            key = metric.__name__
+        else:
+            key = str(metric)
 
-        Only applicable to probabilistic simulations.
-        """
-        if self.simulations[name]["simulationType"] != "probabilistic":
+        key = key.lower().strip()
+        aliases = {
+            "quantile_loss": "quantile_loss",
+            "crps": "crps",
+            "fair_crps": "fair_crps",
+            "faircrps": "fair_crps",
+            "reliability": "reliability",
+            "resolution": "resolution",
+            "resolution_relative": "resolution_relative",
+            "brier_score": "brier_score",
+            "briers": "brier_score",
+            "fair_brier_score": "fair_brier_score",
+            "fairbriers": "fair_brier_score",
+            "fair_crps_skill_score": "fair_crps_skill_score",
+            "faircrpss": "fair_crps_skill_score",
+            "fair_brier_skill_score": "fair_brier_skill_score",
+            "fairbrierss": "fair_brier_skill_score",
+        }
+        if key not in aliases:
+            raise Exception("Unsupported probabilistic metric: %s" % key)
+        return aliases[key]
+
+    def _prepare_probabilistic_inputs(self, name, leadtime, months=None):
+        """Prepare aligned simulations, probabilities and targets for one leadtime."""
+        if hasattr(leadtime, "__iter__") and not isinstance(leadtime, str):
             raise Exception(
-                'The "quantile_loss" metric can only be applied to probabilistic data.'
+                "The probabilistic wrapper expects a single leadtime, not an iterable."
             )
 
-        probabilities = np.asarray(self.simulations[name]["probabilities"])
-        leadtimes = self._convert_leadtimes(leadtimes)
-        quantile_losses = []
-        for leadtime in leadtimes:
-            data = self._getLeadtime(self.simulations[name]["data"], leadtime)
-            tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
-            targets = tmp.loc[:, ["Reference"]].values
-            simulations = tmp.drop("Reference", axis=1).values
-            quantile_losses.append(_prob.quantile_loss(simulations, probabilities, targets))
-
-        if len(quantile_losses) > 1:
-            return pd.DataFrame(
-                quantile_losses,
-                index=pd.Index(leadtimes, name="leadtime"),
-                columns=pd.Index([name], name="Quantile loss"),
-            ).transpose()
-        return quantile_losses[0]
-
-    @storedResults()
-    def CRPS(self, name, leadtime, lowThreshold=None, highThreshold=None, months=None):
-        """Continuous ranked probability score (CRPS)."""
-        if highThreshold is not None:
-            raise Exception("Computation for high threshold not implemented.")
-        if lowThreshold is not None:
-            raise Exception("Computation for low threshold not implemented.")
-
         data = self._getLeadtime(self.simulations[name]["data"], leadtime)
+        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
+
+        if months is not None:
+            tmp = tmp.loc[tmp.index.month.isin(months), :]
+
+        targets = tmp.loc[:, ["Reference"]].values
+        simulations = tmp.drop("Reference", axis=1).values
         probabilities = np.asarray(self.simulations[name]["probabilities"])
         simulation_type = self.simulations[name]["simulationType"]
+        return simulations, probabilities, targets, tmp.index, simulation_type
 
-        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
-        targets = tmp.loc[:, ["Reference"]]
-        simulations = tmp.drop("Reference", axis=1)
-
-        p_values = self._p_values(name, leadtime)
-        p_values_aligned = p_values.loc[simulations.index, :].values  # (n, 1)
-
-        if simulation_type == "ensemble":
-            integral_vals = _prob.crps_ensemble_integral(
-                simulations.values, probabilities, targets.values, p_values_aligned
-            )
-            integral = pd.DataFrame({"integral": integral_vals}, index=simulations.index)
-
-        elif simulation_type == "probabilistic":
-            if probabilities[0] != 0 or probabilities[-1] != 1:
-                warnings.warn(
-                    "Boundaries of the probabilistic forecast are incomplete (not [0,1])."
-                )
-            probs_c = probabilities.copy()
-            sims_c = simulations.values.copy()
-            if probabilities[0] != 0:
-                probs_c = np.r_[0.0, probs_c]
-                sims_c = np.c_[sims_c[:, 0], sims_c]
-            if probabilities[-1] != 1:
-                probs_c = np.r_[probs_c, 1.0]
-                sims_c = np.c_[sims_c, sims_c[:, -1]]
-
-            integral_vals = _prob.crps_probabilistic_integral(
-                sims_c, probs_c, targets.values, p_values_aligned
-            )
-            integral = pd.DataFrame({"integral": integral_vals}, index=simulations.index)
-
-        elif simulation_type == "simple":
-            vals = np.abs(simulations.values - targets.values).ravel()
-            integral = pd.DataFrame({"integral": vals}, index=simulations.index)
-
-        else:
-            raise Exception(
-                "Not possible to compute CRPS for %s simulations." % simulation_type
-            )
-
-        if months is None:
-            valid = np.ones(len(integral), dtype=bool)
-        else:
-            valid = integral.index.month.isin(months)
-
-        result = float(np.mean(integral.loc[valid, "integral"].values))
-        return result
-
-    @storedResults()
-    def fairCRPS(self, name, leadtime, lowThreshold=None, highThreshold=None, months=None):
-        """Fair CRPS (removes ensemble-size bias for ensemble forecasts)."""
-        if highThreshold is not None:
-            raise Exception("Computation for high threshold not implemented.")
-        if lowThreshold is not None:
-            raise Exception("Computation for low threshold not implemented.")
-
-        crps = self.CRPS(
-            name,
-            leadtime=leadtime,
-            lowThreshold=lowThreshold,
-            highThreshold=highThreshold,
-            months=months,
-        )
-
-        if self.simulations[name]["simulationType"] != "ensemble":
-            return crps
-
-        probabilities = np.asarray(self.simulations[name]["probabilities"])
-        data = self._getLeadtime(self.simulations[name]["data"], leadtime)
-        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
-        simulations = tmp.drop("Reference", axis=1)
-
-        spread_per_sample = _prob.fair_crps_ensemble_spread(
-            simulations.values, probabilities
-        )
-        spread_df = pd.DataFrame(
-            {"integral": spread_per_sample}, index=simulations.index
-        )
-
-        if months is None:
-            valid = np.ones(len(spread_df), dtype=bool)
-        else:
-            valid = spread_df.index.month.isin(months)
-
-        return crps - float(np.mean(spread_df.loc[valid, "integral"].values))
-
-    def reliability(self, name, leadtimes):
+    def probabilistic(self, metric, name, leadtime, months=None, metric_kwargs=None):
         """
-        Reliability (alpha score) after Renard et al. (2010).
-
-        Values closer to 1 indicate better calibration.
-        """
-        
-        leadtimes = self._convert_leadtimes(leadtimes)
-        alphas = []
-        for leadtime in leadtimes:
-            p_values = self._p_values(name, leadtime)
-            sorted_pv = np.sort(p_values.values.ravel())
-            uniform = np.linspace(0, 1, sorted_pv.size)
-            alpha_prime = np.abs(sorted_pv - uniform).mean()
-            alphas.append(1.0 - 2.0 * alpha_prime)
-
-        if len(alphas) > 1:
-            return pd.DataFrame(
-                alphas,
-                index=pd.Index(leadtimes, name="leadtime"),
-                columns=pd.Index([name], name="Reliability"),
-            ).transpose()
-        return alphas[0]
-
-    def resolution(self, name, leadtimes, relative=False):
-        """
-        Resolution (sharpness) after Renard et al. (2010).
+        Apply a probabilistic metric function to one leadtime forecast slice.
 
         Parameters
         ----------
-        relative : bool
-            If ``True`` returns mean/std (relative); otherwise 1/std (absolute).
+        metric : callable or str
+            Probabilistic metric identifier.
+        name : str
+            Simulation name.
+        leadtime : timedelta
+            Single leadtime to evaluate.
+        months : iterable[int] or None
+            Optional subset of months to include.
+        metric_kwargs : dict or None
+            Extra arguments for metrics needing additional inputs,
+            for example threshold or reference.
         """
-        leadtimes = self._convert_leadtimes(leadtimes)
-        pis = []
-        metric = "Resolution"
-        for leadtime in leadtimes:
-            data = self._getLeadtime(self.simulations[name]["data"], leadtime)
-            sim_type = self.simulations[name]["simulationType"]
-            if sim_type == "probabilistic":
-                # Numerical integration: probabilities = interval widths between
-                # [0, q1, q2, ..., qN, 1]; intermediate = midpoints + boundary values.
-                # Both arrays have n_quantiles+1 elements → shapes match.
-                probs = np.diff(
-                    np.unique(np.r_[0, self.simulations[name]["probabilities"], 1])
-                )
-                probs = np.tile(probs, (data.shape[0], 1))
-                intermediate = np.c_[
-                    data.values[:, [0]],
-                    data.values[:, :-1] + data.diff(axis=1).values[:, 1:] / 2,
-                    data.values[:, [-1]],
-                ]
-                means = np.sum(probs * intermediate, axis=1)
-                means_ = np.tile(means, (probs.shape[1], 1)).T
-                stds = np.sqrt(
-                    np.sum(np.square(intermediate - means_) * probs, axis=1)
-                )
-                statistics = pd.DataFrame({"Mean": means, "Std": stds}, index=data.index)
-            elif sim_type == "ensemble":
-                # For equal-weight ensembles use the direct sample mean/std.
-                # The midpoint formula produces n_members+1 columns but weight
-                # arrays have n_members columns → shape mismatch.
-                means = data.values.mean(axis=1)
-                stds = data.values.std(axis=1, ddof=0)
-                statistics = pd.DataFrame({"Mean": means, "Std": stds}, index=data.index)
-            else:
-                pis.append(np.inf)
-                continue
-
-            if relative:
-                pi = float(np.mean(statistics["Mean"] / statistics["Std"]))
-                metric = "Resolution (relative)"
-            else:
-                pi = float(np.mean(1.0 / statistics["Std"]))
-                metric = "Resolution (absolute)"
-            pis.append(pi)
-
-        if len(pis) > 1:
-            return pd.DataFrame(
-                pis,
-                index=pd.Index(leadtimes, name="leadtime"),
-                columns=pd.Index([name], name=metric),
-            ).transpose()
-        return pis[0]
-
-    def resolution_relative(self, name, leadtimes):
-        """Relative resolution (mean/std)."""
-        return self.resolution(name, leadtimes, relative=True)
-
-    def BrierS(self, name, threshold, leadtime, returnPValues=False, months=None):
-        """Brier score for threshold exceedance."""
-        data = self._getLeadtime(self.simulations[name]["data"], leadtime)
-        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
-        targets = tmp.loc[:, ["Reference"]]
-
-        p_values = self._p_values(name, leadtime, threshold)
-        p_values_ = p_values.loc[targets.index, :]
-        heaviside = np.heaviside(threshold - targets.values, 1)
-        brier = np.square(p_values_.values - heaviside)
-
-        if months is None:
-            valid = np.ones(len(p_values_), dtype=bool)
-        else:
-            valid = p_values_.index.month.isin(months)
-
-        brier_ = brier[valid]
-        if returnPValues:
-            return float(np.mean(brier_)), p_values_.loc[valid]
-        return float(np.mean(brier_))
-
-    def fairBrierS(self, name, threshold, leadtime, months=None):
-        """Fair Brier score (removes ensemble-size bias for ensemble forecasts)."""
-        brier, p_values_ = self.BrierS(
-            name, threshold, leadtime=leadtime, returnPValues=True, months=months
+        metric_kwargs = {} if metric_kwargs is None else dict(metric_kwargs)
+        metric_name = self._resolve_probabilistic_metric(metric)
+        simulations, probabilities, targets, index, simulation_type = (
+            self._prepare_probabilistic_inputs(name, leadtime, months=months)
         )
-        if self.simulations[name]["simulationType"] == "ensemble":
-            n_members = np.asarray(self.simulations[name]["probabilities"]).size
-            return brier - float(
-                np.average(p_values_.values * (1.0 - p_values_.values) / (n_members - 1))
+
+        if metric_name == "quantile_loss":
+            if simulation_type != "probabilistic":
+                raise Exception(
+                    'The "quantile_loss" metric can only be applied to probabilistic data.'
+                )
+            return _prob.quantile_loss(simulations, probabilities, targets)
+
+        if metric_name == "crps":
+            if simulation_type == "probabilistic" and (
+                probabilities[0] != 0 or probabilities[-1] != 1
+            ):
+                warnings.warn(
+                    "Boundaries of the probabilistic forecast are incomplete (not [0,1])."
+                )
+            p_values = self._p_values(name, leadtime).loc[index, :].values
+            return _prob.crps(
+                simulations,
+                probabilities,
+                targets,
+                simulation_type=simulation_type,
+                p_values=p_values,
             )
-        return brier
 
-    def fairCRPSS(self, name, reference, leadtime):
-        """
-        Fair CRPS skill score against a reference simulation.
+        if metric_name == "fair_crps":
+            p_values = self._p_values(name, leadtime).loc[index, :].values
+            return _prob.fair_crps(
+                simulations,
+                probabilities,
+                targets,
+                simulation_type=simulation_type,
+                p_values=p_values,
+            )
 
-        The reference must have exactly one leadtime.
-        """
-        if len(self.simulations[reference]["leadtimes"]) > 1:
-            raise Exception("The reference cannot have more than one leadtime.")
+        if metric_name == "reliability":
+            p_values = self._p_values(name, leadtime).loc[index, :].values
+            return _prob.reliability(p_values)
 
-        ref_leadtime = self.simulations[reference]["leadtimes"][0]  # fix
-        fair_crps = self.fairCRPS(name, leadtime=leadtime)
-        fair_crps_ref = self.fairCRPS(reference, leadtime=ref_leadtime)  # fix
-        return 1.0 - fair_crps / fair_crps_ref
+        if metric_name in ("resolution", "resolution_relative"):
+            relative = bool(metric_kwargs.get("relative", False))
+            if metric_name == "resolution_relative":
+                relative = True
+            return _prob.resolution(
+                simulations,
+                probabilities,
+                simulation_type=simulation_type,
+                relative=relative,
+            )
 
-    def fairBrierSS(self, name, reference, threshold, leadtime):
-        """
-        Fair Brier skill score against a reference simulation.
+        if metric_name in ("brier_score", "fair_brier_score"):
+            threshold = metric_kwargs.get("threshold")
+            if threshold is None:
+                raise Exception("Please provide threshold in metric_kwargs.")
 
-        The reference must have exactly one leadtime.
-        """
-        if len(self.simulations[reference]["leadtimes"]) > 1:
-            raise Exception("The reference cannot have more than one leadtime.")
+            p_values_df = self._p_values(name, leadtime, threshold).loc[index, :]
+            return_p_values = bool(metric_kwargs.get("return_p_values", False))
 
-        ref_leadtime = self.simulations[reference]["leadtimes"][0]            # fix
-        fair_brier = self.fairBrierS(name, threshold, leadtime=leadtime)
-        fair_brier_ref = self.fairBrierS(reference, threshold, leadtime=ref_leadtime)  # fix
-        return 1.0 - fair_brier / fair_brier_ref
+            if metric_name == "brier_score" or simulation_type != "ensemble":
+                score = _prob.brier_score(p_values_df.values, targets, threshold)
+            else:
+                score = _prob.fair_brier_score(
+                    p_values_df.values,
+                    targets,
+                    threshold,
+                    n_members=probabilities.size,
+                )
+
+            if return_p_values:
+                return score, p_values_df
+            return score
+
+        if metric_name == "fair_crps_skill_score":
+            reference = metric_kwargs.get("reference")
+            if reference is None:
+                raise Exception("Please provide reference in metric_kwargs.")
+
+            reference_leadtime = metric_kwargs.get("reference_leadtime")
+            if reference_leadtime is None:
+                if len(self.simulations[reference]["leadtimes"]) > 1:
+                    raise Exception("The reference cannot have more than one leadtime.")
+                reference_leadtime = self.simulations[reference]["leadtimes"][0]
+
+            score = self.probabilistic(
+                _prob.fair_crps,
+                name,
+                leadtime,
+                months=months,
+            )
+            score_ref = self.probabilistic(
+                _prob.fair_crps,
+                reference,
+                reference_leadtime,
+                months=months,
+            )
+            return _prob.fair_crps_skill_score(score, score_ref)
+
+        if metric_name == "fair_brier_skill_score":
+            reference = metric_kwargs.get("reference")
+            threshold = metric_kwargs.get("threshold")
+            if reference is None:
+                raise Exception("Please provide reference in metric_kwargs.")
+            if threshold is None:
+                raise Exception("Please provide threshold in metric_kwargs.")
+
+            reference_leadtime = metric_kwargs.get("reference_leadtime")
+            if reference_leadtime is None:
+                if len(self.simulations[reference]["leadtimes"]) > 1:
+                    raise Exception("The reference cannot have more than one leadtime.")
+                reference_leadtime = self.simulations[reference]["leadtimes"][0]
+
+            score = self.probabilistic(
+                _prob.fair_brier_score,
+                name,
+                leadtime,
+                months=months,
+                metric_kwargs={"threshold": threshold},
+            )
+            score_ref = self.probabilistic(
+                _prob.fair_brier_score,
+                reference,
+                reference_leadtime,
+                months=months,
+                metric_kwargs={"threshold": threshold},
+            )
+            return _prob.fair_brier_skill_score(score, score_ref)
+
+        raise Exception("Unknown probabilistic metric: %s" % metric_name)
 
     # ------------------------------------------------------------------
     # Deterministic wrapper
@@ -863,7 +800,7 @@ class ForecastPerformance:
         return ax
 
     def QQPlot(self, name, leadtimes=None, ax=None):
-        """Q–Q plot of p-values against the Uniform(0,1) distribution."""
+        """Q-Q plot of p-values against the Uniform(0,1) distribution."""
         leadtimes = self._convert_leadtimes(leadtimes)
         for leadtime in leadtimes:
             p_values = self._p_values(name, leadtime)
