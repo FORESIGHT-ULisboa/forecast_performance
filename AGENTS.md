@@ -1,0 +1,148 @@
+# AGENTS.md — conventions for AI coding agents
+
+This file is the canonical instruction set for AI agents (Claude Code, GitHub
+Copilot, etc.) working in this repository. `CLAUDE.md` and
+`.github/copilot-instructions.md` are thin pointers to this file.
+
+## What this project is
+
+`forecast_performance` evaluates the skill of **deterministic**, **ensemble**
+and **probabilistic** forecasts against a reference (observation) series. The
+public surface is the `ForecastPerformance` class in
+[performance/forecast_performance.py](performance/forecast_performance.py); pure
+metric functions live in [performance/metrics/](performance/metrics/).
+
+## Environment
+
+- The project runs in a **conda environment named `forecast_performance`**.
+  Use the same environment for the package, the tests, and the notebooks
+  (register it as a Jupyter kernel named `forecast_performance`).
+- Hint (a developer machine; **path will differ on other computers** — do not
+  hard-code it, resolve the env yourself): the interpreter has been seen at
+  `C:\Users\<your-user>\.conda\envs\forecast_performance\python.exe`. `conda`
+  may not be on `PATH`; if so, either activate the env in a conda-aware shell
+  or call that `python.exe` directly. Prefer `conda activate forecast_performance`
+  when `conda` is available.
+- Setup: `pip install -e ".[dev]"` (pulls `pyarrow`/`fastparquet`, needed to
+  read the test parquet datasets).
+- Run tests with `pytest tests/ -v`.
+
+## Canonical long format
+
+Every forecast is stored as a **single-column** `DataFrame` with a `MultiIndex`
+drawn from: `production_datetime`, `event_datetime`, `leadtime`,
+`non_exceedance` (probabilistic), `ensemble_member` (ensemble).
+
+- Add data with `fp.add(df, name=...)`. It calls
+  `ForecastPerformance.normalize_dataframe`, which accepts wide **or** long
+  frames, normalises level-name aliases (`probability`/`prob`/`quantile` →
+  `non_exceedance`; `ensemble`/`member` → `ensemble_member`; `lead`/`lead_time`
+  → `leadtime`; `production`/`event` variants), and derives the missing one of
+  `production_datetime` / `event_datetime` / `leadtime`.
+- The simulation **type** (`simple` / `ensemble` / `probabilistic`) is detected
+  from the index levels and stored in `fp.simulations[name]`.
+- Alignment with the reference is an inner join on `event_datetime` with
+  `dropna` — so incomplete archives (missing production dates, leadtimes,
+  members, quantile levels, or gappy observations) degrade gracefully. Keep it
+  that way; there are dedicated tests in
+  [tests/test_missing_data.py](tests/test_missing_data.py).
+
+## The metric system
+
+- Every public metric is a `Metric` (see
+  [performance/metrics/base.py](performance/metrics/base.py)) — a `str`
+  subclass that is also callable. It **equals and stringifies to its own
+  name**: `str(rmse) == rmse == "rmse"`, `rmse.__name__ == "rmse"`, and
+  `rmse(forecast, obs)` still works.
+- Because of this, never write `metric.__name__` when building a `Results`
+  table — append the `Metric` object directly and it stores as the name.
+- `deterministic` and `probabilistic` are **callable accessors** (see
+  [performance/metrics/accessors.py](performance/metrics/accessors.py)) set on
+  each instance. All three styles are equivalent and supported — keep them
+  symmetric when adding metrics:
+  ```python
+  fp.deterministic(rmse, name, leadtime=lt)     # handle
+  fp.deterministic("rmse", name, leadtime=lt)   # name / alias (case-insensitive)
+  fp.deterministic.rmse(name, leadtime=lt)      # per-metric accessor method
+  ```
+  The accessor's `__call__` forwards to the private `_apply_deterministic` /
+  `_apply_probabilistic` methods on the class; resolution of handle-or-name is
+  done by `_resolve_deterministic_metric` / `_resolve_probabilistic_metric`
+  against the `DETERMINISTIC_METRICS` / `PROBABILISTIC_METRICS` registries in
+  [performance/metrics/__init__.py](performance/metrics/__init__.py).
+- Every metric — deterministic **and** probabilistic — is also exposed as a
+  convenience **handle attribute** on the instance/class under its common-usage
+  name (acronyms uppercased like `fp.RMSE`, `fp.NSE`, `fp.KGEprime`, `fp.CRPS`,
+  `fp.fair_CRPS`; word-based metrics stay snake_case like `fp.reliability`,
+  `fp.brier_score`). These are the `Metric` objects themselves, so they can be
+  dropped into a metrics list and passed to `fp.deterministic(...)` /
+  `fp.probabilistic(...)` without importing anything: `metrics = [fp.CRPS,
+  fp.fair_CRPS, "reliability"]`. `str(fp.CRPS) == "crps"` — the visible attribute
+  name is just a convenience; the metric's identity is its canonical name.
+
+### Adding a new metric (do all of these)
+
+1. Implement the pure function in `metrics/deterministic.py` or
+   `metrics/probabilistic.py` (prefix the raw impl with `_` for deterministic,
+   or wrap in place for probabilistic) and bind a `Metric(...)` with any
+   aliases.
+2. Add it to the `DETERMINISTIC` / `PROBABILISTIC` ordered list (this builds the
+   registry automatically).
+3. Export it from `metrics/__init__.py` and `performance/__init__.py`.
+4. Add an explicit per-metric method on the matching accessor in
+   `metrics/accessors.py` (so editors autocomplete it and its kwargs).
+5. Add a convenience handle attribute on `ForecastPerformance` under its
+   common-usage name (mirroring the `RMSE`/`CRPS` blocks at the top of the
+   class).
+6. For probabilistic metrics, add a dispatch branch in `_apply_probabilistic`.
+
+## Caching, results, baselines
+
+- `Results` ([performance/results.py](performance/results.py)) is a simple
+  accumulator: `append(**fields)` then `to_pandas(index=[...], columns=[...])`.
+- `storedResults` ([performance/decorators.py](performance/decorators.py))
+  caches per-leadtime intermediates (PIT p-values) in
+  `fp.results[name][func][leadtime]`. The cache is **bypassed** when `threshold`
+  or `months` is supplied. Use `fp.clear_cache(name=None)` to drop cached
+  intermediates and `fp.remove(name)` to delete a simulation entirely.
+- Baselines: `fp.get_persistence(leadtimes)` and `fp.get_climatology(...)`
+  return canonical long-format frames you feed back through `fp.add`.
+- Corrections: `fp.adjust_mean(name)` / `fp.adjust_scale(name)` apply a
+  per-leadtime additive / multiplicative shift so the forecast mean matches the
+  reference mean. They operate on **ensemble and probabilistic** simulations
+  (same constant per leadtime, preserving rank/quantile order); deterministic
+  (`simple`) raises.
+- Warnings: `ForecastPerformance(reference, warn=False)` silences informative
+  `UserWarning`s (e.g. incomplete CDF boundaries in CRPS). Spurious numerical
+  warnings inside the integrals are suppressed at the source (`np.errstate` /
+  `warnings.catch_warnings` in `metrics/probabilistic.py`) — keep new numeric
+  code equally quiet rather than letting benign divide/NaN warnings leak.
+
+## Visualisation
+
+- `fp.qq_plot(...)` is matplotlib-based.
+- [performance/plotly_forecasting.py](performance/plotly_forecasting.py)
+  provides Plotly helpers (`plot_lt_*`, `plot_pd_*`, `add_observed_trace`,
+  `apply_default_layout`, colour helpers). Plotting tests run headless: set the
+  matplotlib `Agg` backend and inspect `fig.data` / `fig.layout` rather than
+  rendering. See [tests/test_plotting.py](tests/test_plotting.py).
+
+## Tests
+
+- Fixtures are in [tests/conftest.py](tests/conftest.py): **daily parquet**
+  fixtures (`fp_det_daily` / `fp_ens_daily` / `fp_prob_daily`, plus raw
+  `*_daily` frames) for realistic integration, and **synthetic** fixtures
+  (`fp_simple` / `fp_ensemble` / `fp_probabilistic` / `fp_multi_leadtime`) for
+  analytic-exact assertions (e.g. `CRPS == MAE` for a point forecast).
+- When you touch the metric API, keep the "three calling styles agree" tests
+  and the cache tests in
+  [tests/test_forecast_performance.py](tests/test_forecast_performance.py)
+  passing.
+
+## Style
+
+- snake_case is the primary spelling; PascalCase metric aliases (`RMSE`, `NSE`,
+  `KGE`, `KGEprime`, …) are kept for backward compatibility — preserve them.
+- Line length 88; the repo uses `black` (`editor.formatOnSave` is on).
+- Don't break the public re-exports in
+  [performance/__init__.py](performance/__init__.py).

@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from performance import Results
+from performance import Results, rmse, mae
 
 
 class TestResultsInit:
@@ -70,3 +70,21 @@ class TestResultsToPandas:
         df = r.to_pandas()
         assert isinstance(df, pd.DataFrame)
         assert "Value" in df.columns
+
+
+class TestResultsWithMetricObjects:
+    """Metric objects stringify to their name, so they drop in directly."""
+
+    def test_metric_object_as_field(self):
+        r = Results("Metric")
+        r.append(Metric=rmse, Value=0.5)   # no rmse.__name__
+        r.append(Metric=mae, Value=0.3)
+        assert r.results["Metric"] == ["rmse", "mae"]
+
+    def test_pivot_columns_are_names(self):
+        r = Results("Model", "Metric")
+        r.append(Model="A", Metric=rmse, Value=0.5)
+        r.append(Model="A", Metric=mae, Value=0.3)
+        df = r.to_pandas(index=["Model"], columns=["Metric"])
+        cols = [str(c) for c in df.columns.get_level_values("Metric")]
+        assert set(cols) == {"rmse", "mae"}

@@ -4,11 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forecast-performance"
-version = "0.4.0"
+version = "0.5.0"
 description = "Evaluation metrics and diagnostics for deterministic and probabilistic forecasts"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
+authors = [
+    { name = "FORESIGHT", email = "jose.matos@tecnico.ulisboa.pt" },
+]
+keywords = ["forecast", "verification", "metrics", "crps", "ensemble", "probabilistic", "hydrology"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
@@ -20,6 +30,9 @@ dependencies = [
     "plotly",
 ]
 
+[project.urls]
+Homepage = "https://foresight.tecnico.ulisboa.pt/"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
@@ -28,6 +41,10 @@ dev = [
     "ipykernel>=6.0",
     "pyarrow",
     "fastparquet",
+]
+build = [
+    "build>=1.0",
+    "twine>=4.0",
 ]
 
 [tool.setuptools.packages.find]

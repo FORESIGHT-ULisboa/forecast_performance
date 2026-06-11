@@ -1,21 +1,96 @@
 """
 Shared pytest fixtures used across all test modules.
 
-Three ForecastPerformance instances are created from synthetic data:
+Two flavours of data are provided:
+
+**Real daily parquet datasets** (``tests/test_datasets_daily/``) — the primary
+integration fixtures, loaded once per session:
+
+* ``fp_det_daily``  — deterministic forecast (``det.parquet``)
+* ``fp_ens_daily``  — 10-member ensemble (``ens.parquet``)
+* ``fp_prob_daily`` — 10-quantile probabilistic forecast (``prob.parquet``)
+
+plus the raw frames ``obs_daily`` / ``det_daily`` / ``ens_daily`` /
+``prob_daily`` for plotting tests.
+
+**Synthetic data** — a sinusoidal seasonal cycle plus white noise, kept for
+unit tests where analytic bounds must hold exactly (e.g. ``CRPS == MAE`` for a
+deterministic forecast):
 
 * ``fp_simple``       — a single deterministic forecast column
 * ``fp_ensemble``     — a 10-member ensemble forecast
 * ``fp_probabilistic``— a 9-quantile probabilistic forecast
-
-The reference signal is a simple sinusoidal seasonal cycle plus white noise,
-making analytic bounds easy to reason about.
+* ``fp_multi_leadtime``— a two-leadtime ensemble
 """
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from performance import ForecastPerformance
+
+# ---------------------------------------------------------------------------
+# Real daily parquet datasets
+# ---------------------------------------------------------------------------
+DAILY_DIR = Path(__file__).parent / "test_datasets_daily"
+
+
+@pytest.fixture(scope="session")
+def obs_daily() -> pd.DataFrame:
+    """Daily observations (reference), indexed by ``event_datetime``."""
+    return pd.read_parquet(DAILY_DIR / "obs.parquet")
+
+
+@pytest.fixture(scope="session")
+def det_daily() -> pd.DataFrame:
+    """Daily deterministic forecast in canonical long format."""
+    return pd.read_parquet(DAILY_DIR / "det.parquet")
+
+
+@pytest.fixture(scope="session")
+def ens_daily() -> pd.DataFrame:
+    """Daily 10-member ensemble forecast in canonical long format."""
+    return pd.read_parquet(DAILY_DIR / "ens.parquet")
+
+
+@pytest.fixture(scope="session")
+def prob_daily() -> pd.DataFrame:
+    """Daily 10-quantile probabilistic forecast in canonical long format."""
+    return pd.read_parquet(DAILY_DIR / "prob.parquet")
+
+
+@pytest.fixture
+def fp_det_daily(obs_daily, det_daily) -> ForecastPerformance:
+    fp = ForecastPerformance(obs_daily)
+    fp.add(det_daily, name="det")
+    return fp
+
+
+@pytest.fixture
+def fp_ens_daily(obs_daily, ens_daily) -> ForecastPerformance:
+    fp = ForecastPerformance(obs_daily)
+    fp.add(ens_daily, name="ens")
+    return fp
+
+
+@pytest.fixture
+def fp_prob_daily(obs_daily, prob_daily) -> ForecastPerformance:
+    fp = ForecastPerformance(obs_daily)
+    fp.add(prob_daily, name="prob")
+    return fp
+
+
+@pytest.fixture
+def daily_leadtime(prob_daily) -> pd.Timedelta:
+    """A representative leadtime present in the daily datasets."""
+    return sorted(prob_daily.index.get_level_values("leadtime").unique())[0]
+
+
+# ---------------------------------------------------------------------------
+# Synthetic data (analytic-bound unit tests)
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

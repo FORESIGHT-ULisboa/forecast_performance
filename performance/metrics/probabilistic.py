@@ -13,8 +13,12 @@ Shapes
 ``p_values``     : ``(n_samples, 1)``  — probability-integral-transform values
 """
 
+import warnings
+
 import numpy as np
 from typing import Optional
+
+from .base import Metric
 
 
 # ---------------------------------------------------------------------------
@@ -81,11 +85,15 @@ def p_values_ensemble(
     targets_tiled = np.tile(targets, (1, simulations.shape[1]))
     probs_tiled = np.tile(probabilities[np.newaxis, :], (n, 1))
 
-    p_vals = np.nanmax(
-        np.where(simulations < targets_tiled, probs_tiled, np.nan),
-        axis=1,
-        keepdims=True,
-    )
+    # A target below every member yields an all-NaN slice (p-value 0); the
+    # warning is expected and the NaN is replaced below, so silence it.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        p_vals = np.nanmax(
+            np.where(simulations < targets_tiled, probs_tiled, np.nan),
+            axis=1,
+            keepdims=True,
+        )
     p_vals[np.isnan(p_vals)] = 0.0
     return p_vals.ravel()
 
@@ -148,9 +156,11 @@ def crps_ensemble_integral(
     probs_tiled = np.tile(probabilities[np.newaxis, :], (n_samples, 1))  # (n, m)
     p_vals_tiled = np.tile(p_values, (1, n_members))                      # (n, m)
 
-    prob_below_pval = np.nanmax(
-        np.where(probs_tiled <= p_vals_tiled, probs_tiled, np.nan), axis=1
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        prob_below_pval = np.nanmax(
+            np.where(probs_tiled <= p_vals_tiled, probs_tiled, np.nan), axis=1
+        )
     prob_below_pval[np.isnan(prob_below_pval)] = 0.0
 
     probs_ext = np.sort(np.c_[probs_tiled, prob_below_pval], axis=1)  # (n, m+1)
@@ -210,18 +220,22 @@ def crps_probabilistic_integral(
     heaviside = (idxs <= col_range).astype(float)
 
     integral = np.full((n_samples, n_cols), np.nan)
-    for i in range(n_cols):
-        h = heaviside[:, i]
-        y0 = np.abs(probs_ext[:, i] - h)
-        y1 = np.abs(probs_ext[:, i + 1] - h)
-        x0 = sims_ext[:, i]
-        x1 = sims_ext[:, i + 1]
-        b = (y1 - y0) / (x1 - x0)
-        a = y0 - b * x0
-        b[b == 0] = 1e-9
-        integral[:, i] = (
-            np.power(a + b * x1, 3) - np.power(a + b * x0, 3)
-        ) / (3.0 * b)
+    # Adjacent quantiles can coincide (x1 == x0), producing benign
+    # divide-by-zero / invalid values that are discarded by the nansum below;
+    # suppress those numerical warnings rather than surface them to callers.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for i in range(n_cols):
+            h = heaviside[:, i]
+            y0 = np.abs(probs_ext[:, i] - h)
+            y1 = np.abs(probs_ext[:, i + 1] - h)
+            x0 = sims_ext[:, i]
+            x1 = sims_ext[:, i + 1]
+            b = (y1 - y0) / (x1 - x0)
+            a = y0 - b * x0
+            b[b == 0] = 1e-9
+            integral[:, i] = (
+                np.power(a + b * x1, 3) - np.power(a + b * x0, 3)
+            ) / (3.0 * b)
 
     return np.nansum(integral, axis=1)
 
@@ -410,3 +424,63 @@ def fair_crps_skill_score(score: float, score_reference: float) -> float:
 def fair_brier_skill_score(score: float, score_reference: float) -> float:
     """Return fair Brier skill score against a reference forecast."""
     return float(1.0 - score / score_reference)
+
+
+def _resolution_relative(
+    simulations: np.ndarray,
+    probabilities: np.ndarray,
+    simulation_type: str,
+) -> float:
+    """Return relative forecast resolution (mean / spread)."""
+    return resolution(simulations, probabilities, simulation_type, relative=True)
+
+
+# ---------------------------------------------------------------------------
+# Public metrics — Metric objects that stringify to their name.
+#
+# Wrapping happens after the implementations are defined; functions that call
+# each other (e.g. fair_crps -> crps) resolve the name at call time, so they
+# transparently go through Metric.__call__.
+# ---------------------------------------------------------------------------
+
+quantile_loss = Metric("quantile_loss", quantile_loss, kind="probabilistic")
+crps = Metric("crps", crps, kind="probabilistic")
+fair_crps = Metric("fair_crps", fair_crps, kind="probabilistic", aliases=("faircrps",))
+reliability = Metric("reliability", reliability, kind="probabilistic")
+resolution = Metric("resolution", resolution, kind="probabilistic")
+resolution_relative = Metric(
+    "resolution_relative", _resolution_relative, kind="probabilistic"
+)
+brier_score = Metric(
+    "brier_score", brier_score, kind="probabilistic", aliases=("briers",)
+)
+fair_brier_score = Metric(
+    "fair_brier_score", fair_brier_score, kind="probabilistic", aliases=("fairbriers",)
+)
+fair_crps_skill_score = Metric(
+    "fair_crps_skill_score",
+    fair_crps_skill_score,
+    kind="probabilistic",
+    aliases=("faircrpss",),
+)
+fair_brier_skill_score = Metric(
+    "fair_brier_skill_score",
+    fair_brier_skill_score,
+    kind="probabilistic",
+    aliases=("fairbrierss",),
+)
+
+
+#: All public probabilistic metrics, in display order.
+PROBABILISTIC = [
+    quantile_loss,
+    crps,
+    fair_crps,
+    reliability,
+    resolution,
+    resolution_relative,
+    brier_score,
+    fair_brier_score,
+    fair_crps_skill_score,
+    fair_brier_skill_score,
+]

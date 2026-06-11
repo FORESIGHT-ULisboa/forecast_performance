@@ -15,6 +15,8 @@ from scipy.optimize import minimize
 from .decorators import storedResults
 from .metrics import deterministic as _det
 from .metrics import probabilistic as _prob
+from .metrics import DETERMINISTIC_METRICS, PROBABILISTIC_METRICS, Metric
+from .metrics.accessors import DeterministicAccessor, ProbabilisticAccessor
 
 # ---------------------------------------------------------------------------
 # Canonical MultiIndex level names and aliases
@@ -201,19 +203,52 @@ class ForecastPerformance:
     count = staticmethod(_det.count)
 
     # ------------------------------------------------------------------
+    # Probabilistic metrics exposed as handles (common-usage names).
+    # Each is the underlying Metric, so str(fp.CRPS) == "crps" and it can be
+    # passed to probabilistic() or dropped into a metrics list, exactly like
+    # the deterministic handles above.
+    # ------------------------------------------------------------------
+    CRPS = staticmethod(_prob.crps)
+    fair_CRPS = staticmethod(_prob.fair_crps)
+    quantile_loss = staticmethod(_prob.quantile_loss)
+    reliability = staticmethod(_prob.reliability)
+    resolution = staticmethod(_prob.resolution)
+    resolution_relative = staticmethod(_prob.resolution_relative)
+    brier_score = staticmethod(_prob.brier_score)
+    fair_brier_score = staticmethod(_prob.fair_brier_score)
+    fair_CRPS_skill_score = staticmethod(_prob.fair_crps_skill_score)
+    fair_brier_skill_score = staticmethod(_prob.fair_brier_skill_score)
+
+    # ------------------------------------------------------------------
     # Construction / data ingestion
     # ------------------------------------------------------------------
 
     @_validate_reference_input
-    def __init__(self, reference):
+    def __init__(self, reference, warn=True):
+        """
+        Parameters
+        ----------
+        reference : pd.Series or pd.DataFrame
+            Observed values (see class docstring).
+        warn : bool, optional
+            Emit informative ``UserWarning``s (e.g. when a probabilistic
+            forecast's CDF does not span ``[0, 1]``). Set ``False`` to silence
+            them. Spurious *numerical* warnings from the internal integrals are
+            always suppressed regardless of this flag. Default ``True``.
+        """
         self.reference = reference
         if not isinstance(self.reference, pd.DataFrame):
             self.reference = self.reference.to_frame()
         self.reference.columns = ["Reference"]
         if not isinstance(self.reference.index, pd.MultiIndex):
             self.reference.index.name = "event_datetime"
+        self.warn = warn
         self.simulations = {}
         self.results = {}
+
+        # Callable, autocompletable metric accessors (see metrics.accessors).
+        self.deterministic = DeterministicAccessor(self)
+        self.probabilistic = ProbabilisticAccessor(self)
 
     @staticmethod
     def normalize_dataframe(data, value_name="values"):
@@ -500,6 +535,56 @@ class ForecastPerformance:
         return table
 
     # ------------------------------------------------------------------
+    # Simulation management
+    # ------------------------------------------------------------------
+
+    def remove(self, name):
+        """
+        Delete a registered simulation and its cached results.
+
+        Parameters
+        ----------
+        name : str
+            Name of the simulation to drop (as passed to :meth:`add`).
+
+        Raises
+        ------
+        KeyError
+            If *name* is not a registered simulation.
+        """
+        if name not in self.simulations:
+            raise KeyError("No simulation named %r." % name)
+        del self.simulations[name]
+        self.results.pop(name, None)
+
+    def clear_cache(self, name=None):
+        """
+        Clear cached intermediate results (e.g. PIT p-values).
+
+        The :func:`~performance.storedResults` decorator caches per-leadtime
+        intermediates in ``self.results[name]``; clearing forces recomputation
+        on the next metric call. This does **not** remove the simulation data.
+
+        Parameters
+        ----------
+        name : str or None
+            Simulation whose cache to clear. If ``None`` (default), the caches
+            of **all** simulations are cleared.
+
+        Raises
+        ------
+        KeyError
+            If *name* is given but is not a registered simulation.
+        """
+        if name is None:
+            for key in self.results:
+                self.results[key] = {}
+            return
+        if name not in self.simulations:
+            raise KeyError("No simulation named %r." % name)
+        self.results[name] = {}
+
+    # ------------------------------------------------------------------
     # Cropping
     # ------------------------------------------------------------------
 
@@ -539,26 +624,51 @@ class ForecastPerformance:
     # ------------------------------------------------------------------
 
     def adjust_mean(self, name):
-        """Shift ensemble members so the ensemble mean matches the reference mean."""
-        if self.simulations[name]["simulationType"] != "ensemble":
-            raise Exception("The mean can only be adjusted in ensemble simulations.")
-        ref_mean = np.nanmean(self.reference.values.ravel())
-        for lt in self.simulations[name]["leadtimes"]:
-            mask = self.simulations[name]["data"].index.get_level_values("leadtime") == lt
-            ens_mean = np.nanmean(self.simulations[name]["data"].loc[mask, "values"])
-            if not np.isnan(ens_mean):
-                self.simulations[name]["data"].loc[mask, "values"] -= ens_mean - ref_mean
+        """
+        Shift forecast values, per leadtime, so their mean matches the
+        reference mean (additive bias correction).
+
+        Works on **ensemble** and **probabilistic** simulations: every member
+        (ensemble) or quantile value (probabilistic) at a given leadtime is
+        shifted by the same constant, which preserves ensemble rank and
+        quantile ordering. Not defined for deterministic (``simple``)
+        simulations.
+        """
+        self._adjust(name, "mean")
 
     def adjust_scale(self, name):
-        """Scale ensemble members so the ensemble mean matches the reference mean."""
-        if self.simulations[name]["simulationType"] != "ensemble":
-            raise Exception("The scale can only be adjusted in ensemble simulations.")
+        """
+        Scale forecast values, per leadtime, so their mean matches the
+        reference mean (multiplicative correction).
+
+        Works on **ensemble** and **probabilistic** simulations: every member
+        (ensemble) or quantile value (probabilistic) at a given leadtime is
+        multiplied by the same positive factor, which preserves ensemble rank
+        and quantile ordering. Not defined for deterministic (``simple``)
+        simulations.
+        """
+        self._adjust(name, "scale")
+
+    def _adjust(self, name, how):
+        """Shared per-leadtime mean/scale correction for ensemble/probabilistic."""
+        sim_type = self.simulations[name]["simulationType"]
+        if sim_type not in ("ensemble", "probabilistic"):
+            raise Exception(
+                "%s can only be adjusted in ensemble or probabilistic "
+                "simulations, not %r." % (how, sim_type)
+            )
         ref_mean = np.nanmean(self.reference.values.ravel())
+        data = self.simulations[name]["data"]
+        lt_values = data.index.get_level_values("leadtime")
         for lt in self.simulations[name]["leadtimes"]:
-            mask = self.simulations[name]["data"].index.get_level_values("leadtime") == lt
-            ens_mean = np.nanmean(self.simulations[name]["data"].loc[mask, "values"])
-            if ens_mean != 0 and not np.isnan(ens_mean):
-                self.simulations[name]["data"].loc[mask, "values"] *= ref_mean / ens_mean
+            mask = lt_values == lt
+            fcst_mean = np.nanmean(data.loc[mask, "values"])
+            if np.isnan(fcst_mean):
+                continue
+            if how == "mean":
+                data.loc[mask, "values"] -= fcst_mean - ref_mean
+            elif fcst_mean != 0:
+                data.loc[mask, "values"] *= ref_mean / fcst_mean
 
     # ------------------------------------------------------------------
     # Reference / baseline forecasts
@@ -694,29 +804,35 @@ class ForecastPerformance:
     # Probabilistic metrics
     # ------------------------------------------------------------------
 
+    def _resolve_deterministic_metric(self, metric):
+        """Resolve a deterministic metric handle or name to a Metric object.
+
+        Accepts a :class:`Metric`, any callable, or a string name/alias
+        (case-insensitive). This lets ``deterministic`` be called with either
+        ``rmse`` or ``"rmse"`` interchangeably.
+        """
+        if isinstance(metric, str) and not isinstance(metric, Metric):
+            key = metric.lower().strip()
+            if key not in DETERMINISTIC_METRICS:
+                raise Exception("Unsupported deterministic metric: %s" % metric)
+            return DETERMINISTIC_METRICS[key]
+        if callable(metric):
+            return metric
+        raise TypeError(
+            "metric must be a callable or a metric name, got %s."
+            % type(metric).__name__
+        )
+
     def _resolve_probabilistic_metric(self, metric):
-        """Map metric callables and aliases to a canonical metric key."""
+        """Map a metric handle or name/alias to its canonical metric key.
+
+        Accepts a :class:`Metric`, any callable, or a string name/alias, so
+        ``probabilistic`` can be called with either ``crps`` or ``"crps"``.
+        """
         key = (metric.__name__ if callable(metric) else str(metric)).lower().strip()
-        aliases = {
-            "quantile_loss": "quantile_loss",
-            "crps": "crps",
-            "fair_crps": "fair_crps",
-            "faircrps": "fair_crps",
-            "reliability": "reliability",
-            "resolution": "resolution",
-            "resolution_relative": "resolution_relative",
-            "brier_score": "brier_score",
-            "briers": "brier_score",
-            "fair_brier_score": "fair_brier_score",
-            "fairbriers": "fair_brier_score",
-            "fair_crps_skill_score": "fair_crps_skill_score",
-            "faircrpss": "fair_crps_skill_score",
-            "fair_brier_skill_score": "fair_brier_skill_score",
-            "fairbrierss": "fair_brier_skill_score",
-        }
-        if key not in aliases:
+        if key not in PROBABILISTIC_METRICS:
             raise Exception("Unsupported probabilistic metric: %s" % key)
-        return aliases[key]
+        return PROBABILISTIC_METRICS[key].__name__
 
     def _prepare_probabilistic_inputs(self, name, leadtime, months=None):
         """Return aligned (simulations, probabilities, targets, index, type)."""
@@ -725,7 +841,7 @@ class ForecastPerformance:
                 "The probabilistic wrapper expects a single leadtime, not an iterable."
             )
         data = self._slice_leadtime(name, leadtime)
-        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
+        tmp = pd.concat((data, self.reference), axis=1, sort=False).dropna(how="any")
         if months is not None:
             tmp = tmp.loc[tmp.index.month.isin(months)]
         targets = tmp.loc[:, ["Reference"]].values
@@ -734,14 +850,19 @@ class ForecastPerformance:
         simulation_type = self.simulations[name]["simulationType"]
         return simulations, probabilities, targets, tmp.index, simulation_type
 
-    def probabilistic(self, metric, name, leadtime, months=None, metric_kwargs=None):
+    def _apply_probabilistic(
+        self, metric, name, leadtime, months=None, metric_kwargs=None
+    ):
         """
         Apply a probabilistic metric to one leadtime slice.
+
+        Backs the callable :attr:`probabilistic` accessor; see its docstring
+        and per-metric methods for the public API.
 
         Parameters
         ----------
         metric : callable or str
-            Probabilistic metric identifier.
+            Probabilistic metric identifier (handle or name/alias).
         name : str
             Simulation name.
         leadtime : timedelta
@@ -765,8 +886,10 @@ class ForecastPerformance:
             return _prob.quantile_loss(simulations, probabilities, targets)
 
         if metric_name == "crps":
-            if simulation_type == "probabilistic" and (
-                probabilities[0] != 0 or probabilities[-1] != 1
+            if (
+                self.warn
+                and simulation_type == "probabilistic"
+                and (probabilities[0] != 0 or probabilities[-1] != 1)
             ):
                 warnings.warn(
                     "Boundaries of the probabilistic forecast are incomplete (not [0,1])."
@@ -918,21 +1041,28 @@ class ForecastPerformance:
         ]
         return pd.concat(parts).sort_index()
 
-    def deterministic(self, metric, name, leadtime=None):
+    def _apply_deterministic(self, metric, name, leadtime=None):
         """
-        Apply a deterministic metric function to the expected forecast.
+        Apply a deterministic metric to the expected forecast.
+
+        Backs the callable :attr:`deterministic` accessor; see its docstring
+        and per-metric methods for the public API.
 
         Parameters
         ----------
-        metric : callable
-            A function ``(simulations, targets) -> scalar``.
+        metric : callable or str
+            A metric ``(simulations, targets) -> scalar`` handle, or its
+            name/alias as a string.
         name : str
         leadtime : timedelta or None
         """
+        metric = self._resolve_deterministic_metric(metric)
         expected = self.get_expected(name=name, leadtime=leadtime)
         ev_idx = pd.DatetimeIndex(expected.index.get_level_values("event_datetime"))
         exp_series = pd.Series(expected.iloc[:, 0].values, index=ev_idx)
-        tmp = pd.concat([exp_series, self.reference.iloc[:, 0]], axis=1).dropna()
+        tmp = pd.concat(
+            [exp_series, self.reference.iloc[:, 0]], axis=1, sort=False
+        ).dropna()
         return metric(tmp.iloc[:, 0].values, tmp.iloc[:, 1].values)
 
     # ------------------------------------------------------------------
@@ -1057,7 +1187,7 @@ class ForecastPerformance:
         probabilities = np.asarray(self.simulations[name]["probabilities"])
         simulation_type = self.simulations[name]["simulationType"]
 
-        tmp = pd.concat((data, self.reference), axis=1).dropna(how="any")
+        tmp = pd.concat((data, self.reference), axis=1, sort=False).dropna(how="any")
         targets = tmp.loc[:, ["Reference"]].copy()
         if threshold is not None:
             targets.loc[:, :] = threshold
