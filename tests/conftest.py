@@ -49,14 +49,14 @@ def _make_noisy_forecast(bias: float = 0.0, scale: float = 1.0) -> pd.DataFrame:
 
 
 def _make_ensemble_forecast(spread: float = 3.0) -> pd.DataFrame:
-    """N_MEMBERS-member ensemble with a Leadtime/Ensemble member MultiIndex."""
+    """N_MEMBERS-member ensemble with a leadtime/ensemble_member MultiIndex."""
     members = {}
     for m in range(N_MEMBERS):
         members[m] = SEASONAL + RNG.normal(0, spread, N)
     df = pd.DataFrame(members, index=DATES)
     df.columns = pd.MultiIndex.from_product(
         [[pd.Timedelta("0D")], range(N_MEMBERS)],
-        names=["Leadtime", "Ensemble member"],
+        names=["leadtime", "ensemble_member"],
     )
     return df
 
@@ -73,7 +73,7 @@ def _make_probabilistic_forecast(spread: float = 3.0) -> pd.DataFrame:
     df = pd.DataFrame(data, index=DATES, columns=QUANTILE_LEVELS)
     df.columns = pd.MultiIndex.from_product(
         [[pd.Timedelta("0D")], QUANTILE_LEVELS],
-        names=["Leadtime", "Probability"],
+        names=["leadtime", "non_exceedance"],
     )
     return df
 
@@ -91,22 +91,22 @@ def reference_series() -> pd.Series:
 @pytest.fixture
 def fp_simple() -> ForecastPerformance:
     fp = ForecastPerformance(_make_reference())
-    fp.add_by_production_date(_make_noisy_forecast(bias=0), name="unbiased")
-    fp.add_by_production_date(_make_noisy_forecast(bias=5), name="biased")
+    fp.add(_make_noisy_forecast(bias=0), name="unbiased")
+    fp.add(_make_noisy_forecast(bias=5), name="biased")
     return fp
 
 
 @pytest.fixture
 def fp_ensemble() -> ForecastPerformance:
     fp = ForecastPerformance(_make_reference())
-    fp.add_by_production_date(_make_ensemble_forecast(), name="ens")
+    fp.add(_make_ensemble_forecast(), name="ens")
     return fp
 
 
 @pytest.fixture
 def fp_probabilistic() -> ForecastPerformance:
     fp = ForecastPerformance(_make_reference())
-    fp.add_by_production_date(_make_probabilistic_forecast(), name="prob")
+    fp.add(_make_probabilistic_forecast(), name="prob")
     return fp
 
 
@@ -127,10 +127,10 @@ def fp_multi_leadtime() -> ForecastPerformance:
         df = pd.DataFrame(members, index=DATES)
         df.columns = pd.MultiIndex.from_product(
             [[lt], range(N_MEMBERS)],
-            names=["Leadtime", "Ensemble member"],
+            names=["leadtime", "ensemble_member"],
         )
         dfs.append(df)
 
     combined = pd.concat(dfs, axis=1)
-    fp.add_by_production_date(combined, name="ens_multi")
+    fp.add(combined, name="ens_multi")
     return fp

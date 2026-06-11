@@ -230,9 +230,10 @@ class TestGetExpectedValue:
         ev = fp_simple.get_expected_value("unbiased")
         assert ev.shape[1] == 1
 
-    def test_ensemble_returns_series(self, fp_ensemble):
+    def test_ensemble_returns_dataframe(self, fp_ensemble):
         ev = fp_ensemble.get_expected_value("ens", leadtime=pd.Timedelta("0D"))
-        assert isinstance(ev, pd.Series)
+        assert isinstance(ev, pd.DataFrame)
+        assert ev.shape[1] == 1
 
     def test_probabilistic_returns_dataframe(self, fp_probabilistic):
         ev = fp_probabilistic.get_expected_value("prob", leadtime=pd.Timedelta("0D"))
@@ -253,8 +254,9 @@ class TestCropProductionDates:
     def test_simulation_cropped(self, fp_simple):
         fp_simple.crop_production_dates(start="2019-01-01", end="2019-12-31")
         sim_index = fp_simple.simulations["unbiased"]["data"].index
-        assert sim_index.min() >= pd.Timestamp("2019-01-01")
-        assert sim_index.max() <= pd.Timestamp("2019-12-31")
+        prod = sim_index.get_level_values("production_datetime")
+        assert prod.min() >= pd.Timestamp("2019-01-01")
+        assert prod.max() <= pd.Timestamp("2019-12-31")
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +312,10 @@ class TestStoredResultsDecorator:
 
 class TestAccessors:
     def test_names(self, fp_simple):
-        names = list(fp_simple.getSimulationNames())
+        names = fp_simple.names()
         assert "unbiased" in names
         assert "biased" in names
 
     def test_leadtimes(self, fp_ensemble):
-        lts = fp_ensemble.getSimulationLeadtimes("ens")
+        lts = fp_ensemble.simulations["ens"]["leadtimes"]
         assert pd.Timedelta("0D") in lts
