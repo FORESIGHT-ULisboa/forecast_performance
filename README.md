@@ -36,14 +36,28 @@ ensemble forecasts and exposes a rich set of metrics and visualisation tools.
 
 ## Installation
 
-### 1  Create a conda environment
+Two paths: install a **released wheel** (use the package), or install **from
+source** (develop / run the notebooks and tests).
+
+### A · Install the v0.5.0 release
+
+The runtime dependencies (numpy, pandas, scipy, matplotlib, seaborn, plotly, …)
+are declared in the wheel, so pip resolves them automatically.
+
+```bat
+pip install https://github.com/FORESIGHT-ULisboa/forecast_performance/releases/download/v0.5.0/forecast_performance-0.5.0-py3-none-any.whl
+```
+
+### B · Install from source (development)
+
+#### 1  Create a conda environment
 
 ```bat
 conda create -n forecast_performance python=3.11
 conda activate forecast_performance
 ```
 
-### 2  Install the package and all dependencies
+#### 2  Install the package and all dependencies
 
 From the repository root, run:
 
@@ -51,7 +65,7 @@ From the repository root, run:
 pip install -e ".[dev]"
 ```
 
-### 3  Register the Jupyter kernel
+#### 3  Register the Jupyter kernel
 
 So the notebooks pick up the right environment:
 
@@ -339,28 +353,62 @@ Notes:
 
 ### `ForecastPerformance`
 
-| Method | Description |
+**Construction & data ingestion**
+
+| Member | Description |
 |---|---|
-| `add(data, name, leadtime=0D, sort=True)` | Register a simulation (auto-normalised to canonical long format) |
-| `normalize_dataframe(data, value_name="values")` | *(static)* Convert any reasonable wide/long frame to canonical long format |
-| `deterministic(metric, name, leadtime=None)` | Apply a deterministic metric (handle **or** name) to the expected forecast |
-| `deterministic.<metric>(name, leadtime=None)` | Per-metric accessor method (autocompletes) |
-| `probabilistic(metric, name, leadtime, months=None, metric_kwargs=None)` | Apply a probabilistic metric (handle **or** name) |
-| `probabilistic.<metric>(name, leadtime=None, ...)` | Per-metric accessor method with metric-specific kwargs |
-| `get_expected(name, leadtime=None)` | Expected (mean) forecast as a long-format `DataFrame` |
-| `get_expected_prediction(name)` | Expected forecast across all leadtimes |
-| `get_persistence(leadtimes)` | Persistence baseline forecast |
-| `get_climatology(...)` | Fourier-fitted climatological probabilistic baseline |
-| `adjust_mean(name)` / `adjust_scale(name)` | Per-leadtime additive / multiplicative correction to the reference mean (ensemble or probabilistic) |
-| `crop_event_dates(...)` / `crop_production_dates(...)` | Restrict the evaluation window |
-| `names()` / `leadtimes()` | Registered simulations and their leadtimes |
-| `remove(name)` | Delete a simulation and its cached results |
-| `clear_cache(name=None)` | Clear cached intermediates (all simulations if `name` is `None`) |
-| `qq_plot(name, leadtimes=None, plot=True, ax=None)` | PIT / Q-Q calibration plot |
+| `ForecastPerformance(reference, warn=True)` | Build an evaluator from an observation `Series`/`DataFrame`. `warn=False` silences informative `UserWarning`s (e.g. incomplete CDF boundaries). |
+| `add(data, name, leadtime="0D", sort=True)` | Register a simulation; auto-normalised to canonical long format. `sort` enforces non-decreasing quantiles for probabilistic data. |
+| `normalize_dataframe(data, value_name="values")` | *(static)* Convert any reasonable wide/long frame to canonical long format. |
 
-### Standalone metric functions
+**Scoring**
 
-All deterministic functions accept 1-D `array-like` arguments `(simulations, targets)`.
+| Member | Description |
+|---|---|
+| `deterministic(metric, name, leadtime=None)` | Apply a deterministic metric (handle **or** name) to the expected forecast. |
+| `deterministic.<metric>(name, leadtime=None)` | Per-metric accessor method (autocompletes), e.g. `fp.deterministic.rmse(...)`. |
+| `deterministic.metrics` | List of the deterministic `Metric` objects (for iteration). |
+| `probabilistic(metric, name, leadtime, months=None, metric_kwargs=None)` | Apply a probabilistic metric (handle **or** name). `months` filters by calendar month; `metric_kwargs` carries per-metric args (see below). |
+| `probabilistic.<metric>(name, leadtime=None, ...)` | Per-metric accessor with metric-specific kwargs surfaced in the signature. |
+| `probabilistic.metrics` | List of the probabilistic `Metric` objects. |
+
+**Expected value & baselines**
+
+| Member | Description |
+|---|---|
+| `get_expected(name, leadtime=None)` | Expected (mean) forecast as a long-format `DataFrame`. For probabilistic data the mean is integrated over the CDF. |
+| `get_expected_prediction(name)` | Expected forecast across all registered leadtimes. |
+| `get_persistence(leadtimes)` | Persistence baseline (observation at production time, carried forward). |
+| `get_climatology(multiplicative=False, leadtimes=None, rolling_window=61, non_exceedance=None, coefficients=9, minimum=-inf, maximum=inf)` | Fourier-fitted seasonal cycle + empirical residual quantiles → probabilistic baseline. |
+
+**Post-processing, cropping & management**
+
+| Member | Description |
+|---|---|
+| `adjust_mean(name)` / `adjust_scale(name)` | Per-leadtime additive / multiplicative correction to the reference mean (ensemble **or** probabilistic; preserves member/quantile order). |
+| `crop_event_dates(start=None, end=None)` / `crop_production_dates(start=None, end=None)` | Restrict the evaluation window by event / production date. |
+| `names()` | List of registered simulation names. |
+| `leadtimes()` | Boolean table of leadtimes × simulations. |
+| `remove(name)` | Delete a simulation and its cached results. |
+| `clear_cache(name=None)` | Clear cached intermediates (all simulations if `name` is `None`). |
+
+**Visualisation**
+
+| Member | Description |
+|---|---|
+| `qq_plot(name, leadtimes=None, plot=True, ax=None)` | PIT / Q-Q calibration plot; returns a `DataFrame` of `uniform`/`p_values`/`leadtime`. |
+
+**Metric handle attributes** — every metric is also exposed on the instance/class
+under its common-usage name, as a passable `Metric` handle (no import needed):
+`fp.RMSE`, `fp.MAE`, `fp.MSE`, `fp.NSE`, `fp.KGE`, `fp.KGEprime`, `fp.Pearson`,
+`fp.Spearman`, `fp.bias`, `fp.relative_bias`, `fp.count`, `fp.CRPS`,
+`fp.fair_CRPS`, `fp.quantile_loss`, `fp.reliability`, `fp.resolution`,
+`fp.resolution_relative`, `fp.brier_score`, `fp.fair_brier_score`,
+`fp.fair_CRPS_skill_score`, `fp.fair_brier_skill_score`.
+
+### Deterministic metrics
+
+All accept 1-D `array-like` arguments `(simulations, targets)` and return a scalar.
 
 | Function | Range | Perfect |
 |---|---|---|
@@ -376,10 +424,46 @@ All deterministic functions accept 1-D `array-like` arguments `(simulations, tar
 | `kge_prime` | (−∞, 1] | 1 |
 | `count` | ℕ | — |
 
-`snake_case` is the primary spelling; `PascalCase` aliases (`RMSE`, `NSE`,
-`KGE`, `KGEprime`, …) are retained for backward compatibility.  The registries
-`DETERMINISTIC_METRICS` / `PROBABILISTIC_METRICS` map every name and alias to its
-`Metric`.
+### Probabilistic metrics
+
+Applied through `fp.probabilistic(...)`. *Applies to* shows the simulation types
+each supports (`simple` = point, `ens` = ensemble, `prob` = quantile).
+
+| Metric | Applies to | Required args | Meaning |
+|---|---|---|---|
+| `crps` | simple, ens, prob | — | Continuous Ranked Probability Score (equals MAE for a point forecast). |
+| `fair_crps` | ens (else = `crps`) | — | CRPS with the finite-ensemble-size bias removed. |
+| `quantile_loss` | prob | — | Mean pinball loss averaged over quantile levels. |
+| `reliability` | simple, ens, prob | — | PIT calibration index, range [−1, 1] (1 = perfectly calibrated). |
+| `resolution` | ens, prob | — | Sharpness, `mean(1 / std)`. |
+| `resolution_relative` | ens, prob | — | Relative sharpness, `mean(mean / std)`. |
+| `brier_score` | simple, ens, prob | `threshold` | Brier score for the event "below `threshold`", range [0, 1]. Pass `return_p_values=True` to also get the exceedance probabilities. |
+| `fair_brier_score` | ens | `threshold` | Brier score with the finite-ensemble correction. |
+| `fair_crps_skill_score` | ens/prob | `reference` (+ `reference_leadtime`) | `1 − fairCRPS / fairCRPS_reference` vs a baseline simulation. |
+| `fair_brier_skill_score` | ens/prob | `reference`, `threshold` (+ `reference_leadtime`) | `1 − fairBrier / fairBrier_reference`. |
+
+Pass the required args either via `metric_kwargs=` on the generic call or as
+keywords on the accessor method:
+
+```python
+fp.probabilistic("brier_score", "ens", leadtime=lt, metric_kwargs={"threshold": 100})
+fp.probabilistic.brier_score("ens", leadtime=lt, threshold=100)
+
+fp.probabilistic.fair_crps_skill_score("ens", leadtime=lt, reference="climatology")
+```
+
+Every probabilistic metric also accepts `months=[...]` to restrict the
+evaluation to specific calendar months.
+
+### `Metric`, registries and naming
+
+- Each public metric is a `Metric` (subclass of `str`): callable, and equal to
+  its own name (`str(rmse) == rmse == "rmse"`, `rmse.__name__ == "rmse"`).
+- `snake_case` is the primary spelling; `PascalCase` aliases (`RMSE`, `NSE`,
+  `KGE`, `KGEprime`, …) are retained for backward compatibility.
+- `DETERMINISTIC_METRICS` / `PROBABILISTIC_METRICS` are dicts mapping every name
+  **and** alias (case-insensitive) to its `Metric`; `DETERMINISTIC` /
+  `PROBABILISTIC` are the ordered lists. All are importable from `performance`.
 
 ### `Results`
 
@@ -391,6 +475,32 @@ r.append(Model="A", Metric=rmse, Value=0.12)   # Metric stringifies to "rmse"
 r.append(Model="B", Metric=rmse, Value=0.08)
 df = r.to_pandas(index=["Model"], columns=["Metric"])
 ```
+
+| Member | Description |
+|---|---|
+| `Results(*fields)` | Create an accumulator with the given field names (a `Value` field is added automatically). |
+| `append(**values)` | Append one row (one keyword per field plus `Value`). |
+| `to_pandas(index=None, columns=None)` | Pivot to a multi-indexed `DataFrame`; `index`/`columns` select which fields become row/column levels. |
+
+### Visualisation helpers (`performance.plotly_forecasting`)
+
+Plotly helpers that take a `go.Figure` and a canonical long-format frame:
+
+| Function | Description |
+|---|---|
+| `plot_lt_deterministic(fig, df, leadtimes=None, **kw)` | Deterministic traces by leadtime. |
+| `plot_pd_deterministic(fig, df, production_datetimes=None, **kw)` | Deterministic traces by production date. |
+| `plot_lt_probabilistic(fig, df, leadtimes=None, bands=None, **kw)` | Shaded quantile bands by leadtime. |
+| `plot_pd_probabilistic(fig, df, production_datetimes=None, **kw)` | Shaded quantile bands by production date. |
+| `plot_pd_ensemble(fig, df, production_dates=None, ensembles=None, **kw)` | Ensemble member traces by production date. |
+| `add_observed_trace(fig, obs, ...)` | Overlay the observation series. |
+| `apply_default_layout(fig, yaxis_title="", ...)` | Apply the shared layout + range selector. |
+
+### `storedResults`
+
+Caching decorator used internally on `_p_values`; results are stored in
+`fp.results[name][func][leadtime]` and bypassed when `threshold`/`months` is
+supplied. Clear with `fp.clear_cache(...)`.
 
 ---
 
