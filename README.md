@@ -30,6 +30,7 @@ ensemble forecasts and exposes a rich set of metrics and visualisation tools.
 | **Baselines** | `get_persistence`, `get_climatology` |
 | **Post-processing** | `adjust_mean`, `adjust_scale` |
 | **Visualisation** | `qq_plot`, `plotly_forecasting` helpers |
+| **Parquet I/O** | `PandasForecast` — round-trips `pd.DateOffset` leadtimes through parquet |
 | **Utilities** | `Results` accumulator, `storedResults` caching decorator |
 
 ---
@@ -39,13 +40,13 @@ ensemble forecasts and exposes a rich set of metrics and visualisation tools.
 Two paths: install a **released wheel** (use the package), or install **from
 source** (develop / run the notebooks and tests).
 
-### A · Install the v0.5.0 release
+### A · Install the v0.6.0 release
 
 The runtime dependencies (numpy, pandas, scipy, matplotlib, seaborn, plotly, …)
 are declared in the wheel, so pip resolves them automatically.
 
 ```bat
-pip install https://github.com/FORESIGHT-ULisboa/forecast_performance/releases/download/v0.5.0/forecast_performance-0.5.0-py3-none-any.whl
+pip install https://github.com/FORESIGHT-ULisboa/forecast_performance/releases/download/v0.6.0/forecast_performance-0.6.0-py3-none-any.whl
 ```
 
 ### B · Install from source (development)
@@ -130,6 +131,33 @@ metrics = [fp.CRPS, fp.fair_CRPS, "reliability", "resolution"]
 for metric in metrics:
     fp.probabilistic(metric, "prob_model", leadtime=lt)
 ```
+
+### Saving forecasts with `DateOffset` leadtimes (`PandasForecast`)
+
+Seasonal / monthly forecasts often express *leadtime* as a `pd.DateOffset`
+(`pd.DateOffset(months=1)`, `pd.DateOffset(years=1)`) instead of a `pd.Timedelta`,
+because calendar months and years have a variable length.  Parquet cannot
+serialize `DateOffset` objects stored in an index or in the columns, so a plain
+`df.to_parquet(...)` raises.
+
+`PandasForecast` is a drop-in `pd.DataFrame` subclass that fixes this: it encodes
+each `DateOffset` in a `leadtime` level (whether in the index **or** the columns)
+on write and restores it on read.  Use it exactly like a `DataFrame`:
+
+```python
+from performance import PandasForecast
+
+PandasForecast(df).to_parquet("forecast.parquet")     # df has a DateOffset leadtime
+back = PandasForecast.read_parquet("forecast.parquet")  # plain DataFrame by default
+back.index.get_level_values("leadtime")[0]            # <DateOffset: months=1>
+```
+
+`read_parquet` returns a plain `pd.DataFrame` by default (so the subclass type
+never leaks downstream); pass `to_pandas=False` to get a `PandasForecast` back.
+
+It is fully backward compatible: a frame with a `Timedelta` (or no) leadtime is
+written verbatim by the normal pandas writer, and a file written this way is still
+readable by plain `pd.read_parquet` (the leadtime then holds the encoded strings).
 
 ---
 
@@ -264,6 +292,7 @@ forecast_performance/
 ├── performance/
 │   ├── __init__.py                 # Public re-exports (metrics, Metric, registries)
 │   ├── forecast_performance.py     # ForecastPerformance main class
+│   ├── pandas_forecast.py          # PandasForecast (DateOffset-aware parquet I/O)
 │   ├── results.py                  # Results accumulator class
 │   ├── decorators.py               # storedResults caching decorator
 │   ├── plotly_forecasting.py       # Plotly visualisation helpers
@@ -324,14 +353,14 @@ This produces both artifacts in `dist/`:
 
 ```
 dist/
-├── forecast_performance-0.5.0-py3-none-any.whl
-└── forecast_performance-0.5.0.tar.gz
+├── forecast_performance-0.6.0-py3-none-any.whl
+└── forecast_performance-0.6.0.tar.gz
 ```
 
 Install the wheel anywhere (no source checkout needed):
 
 ```bat
-pip install dist/forecast_performance-0.5.0-py3-none-any.whl
+pip install dist/forecast_performance-0.6.0-py3-none-any.whl
 ```
 
 Optionally check the metadata and (if you publish) upload with `twine`:
@@ -495,6 +524,32 @@ Plotly helpers that take a `go.Figure` and a canonical long-format frame:
 | `plot_pd_ensemble(fig, df, production_dates=None, ensembles=None, **kw)` | Ensemble member traces by production date. |
 | `add_observed_trace(fig, obs, ...)` | Overlay the observation series. |
 | `apply_default_layout(fig, yaxis_title="", ...)` | Apply the shared layout + range selector. |
+
+### `PandasForecast`
+
+A `pd.DataFrame` subclass whose parquet I/O preserves `pd.DateOffset` leadtimes
+(which parquet cannot otherwise serialize). Each `DateOffset` in a `leadtime`
+level — in the index or the columns — is encoded on write as a sentinel JSON
+string of its `.kwds` and decoded back on read.
+
+| Member | Description |
+|---|---|
+| `PandasForecast(data)` | Wrap a `DataFrame` (or anything `pd.DataFrame` accepts). |
+| `to_parquet(path, *args, **kwargs)` | Like `DataFrame.to_parquet`, encoding any `DateOffset` leadtime first; delegates verbatim to the pandas writer when none is present. |
+| `read_parquet(path, *args, to_pandas=True, **kwargs)` | *(classmethod)* Like `pd.read_parquet`, decoding any encoded leadtime. Returns a plain `pd.DataFrame` by default; pass `to_pandas=False` for a `PandasForecast`. |
+| `to_pandas()` | Return a plain `pd.DataFrame` from a `PandasForecast` instance (decoded `DateOffset` leadtime preserved). Use it before handing data to downstream code that does exact-type checks. |
+
+`PandasForecast` is a `pd.DataFrame` subclass, so it satisfies
+`isinstance(x, pd.DataFrame)` and behaves like a frame everywhere. The subclass
+type does propagate through operations (slicing, `groupby`, arithmetic, `concat`
+all return `PandasForecast`); if downstream code relies on `type(x) is
+pd.DataFrame`, unpickles without this package installed, or uses
+`assert_frame_equal` with the frame as the *expected* argument, call
+`to_pandas()` first.
+
+Multi-keyword offsets (`pd.DateOffset(months=1, days=15)`) and mixed units across
+leadtimes round-trip; offsets `.kwds` cannot capture (anchored `MonthEnd`, a bare
+`pd.DateOffset(2)`) are left to the normal parquet behaviour.
 
 ### `storedResults`
 

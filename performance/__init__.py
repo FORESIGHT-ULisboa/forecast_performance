@@ -15,6 +15,7 @@ Quick start
 """
 
 from .forecast_performance import ForecastPerformance   # noqa: F401
+from .pandas_forecast import PandasForecast             # noqa: F401
 from .results import Results                            # noqa: F401
 from .decorators import storedResults                  # noqa: F401
 from .metrics import (                                  # noqa: F401
@@ -42,9 +43,10 @@ from .metrics import (                                  # noqa: F401
     fair_brier_skill_score,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "ForecastPerformance",
+    "PandasForecast",
     "Results",
     "storedResults",
     "Metric",

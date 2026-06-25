@@ -47,6 +47,43 @@ drawn from: `production_datetime`, `event_datetime`, `leadtime`,
   that way; there are dedicated tests in
   [tests/test_missing_data.py](tests/test_missing_data.py).
 
+## Parquet I/O for `DateOffset` leadtimes
+
+Seasonal/monthly forecasts express `leadtime` as a `pd.DateOffset`
+(`pd.DateOffset(months=n)` / `years=n`) rather than a `pd.Timedelta`, because
+calendar months/years have variable length and must be *added to a production
+date*. Parquet (pyarrow/fastparquet) **cannot serialize `DateOffset`** objects in
+an index or columns. `PandasForecast`
+([performance/pandas_forecast.py](performance/pandas_forecast.py)) is a
+`pd.DataFrame` subclass that fixes this:
+
+- `PandasForecast(df).to_parquet(path)` finds the `leadtime` level (index **or**
+  columns; aliases resolved via `_normalise_name`) and, if every value is a clean
+  `pd.DateOffset`, encodes each as a sentinel-prefixed JSON string of its `.kwds`
+  (`pd.DateOffset(months=3)` → `'DateOffset:{"months": 3}'`). Plain strings
+  serialize natively, so the **normal pandas writer is used unchanged** — no custom
+  parquet key-value metadata, no engine fork. `.kwds` values that are numpy scalars
+  (offsets built from integer columns) are coerced to native Python scalars before
+  JSON serialization (`_coerce_scalar`).
+- `PandasForecast.read_parquet(path, *, to_pandas=True)` (a **classmethod**,
+  mirroring the module-level `pd.read_parquet`) decodes those strings back to
+  `pd.DateOffset`. It returns a **plain `pd.DataFrame` by default** (so the subclass
+  doesn't leak downstream); pass `to_pandas=False` for a `PandasForecast`.
+- Design choices to preserve: each value is self-describing, so multi-keyword
+  offsets and mixed units across leadtimes round-trip for free. Offsets `.kwds`
+  can't capture (anchored `MonthEnd`, bare `pd.DateOffset(2)` with the count in
+  `.n`) are left untouched and degrade to the normal parquet behaviour. `to_parquet`
+  never mutates `self`. A file written this way is still readable by plain
+  `pd.read_parquet` (leadtime then holds the encoded strings) — keep that
+  backward-compat contract; tests live in
+  [tests/test_pandas_forecast.py](tests/test_pandas_forecast.py).
+- It is a `pd.DataFrame` subclass (so `isinstance(x, pd.DataFrame)` holds and the
+  type propagates through ops via `_constructor`). `to_pandas()` returns a plain
+  `pd.DataFrame` for downstream code that does `type(x) is pd.DataFrame` checks,
+  unpickles without this package, or uses `assert_frame_equal` with the frame as
+  the expected arg. There is no extra instance state (`_metadata = []`), so the
+  downcast is loss-free.
+
 ## The metric system
 
 - Every public metric is a `Metric` (see
