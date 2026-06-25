@@ -60,20 +60,25 @@ an index or columns. `PandasForecast`
 - `PandasForecast(df).to_parquet(path)` finds the `leadtime` level (index **or**
   columns; aliases resolved via `_normalise_name`) and, if every value is a clean
   `pd.DateOffset`, encodes each as a sentinel-prefixed JSON string of its `.kwds`
-  (`pd.DateOffset(months=3)` → `'DateOffset:{"months": 3}'`). Plain strings
-  serialize natively, so the **normal pandas writer is used unchanged** — no custom
-  parquet key-value metadata, no engine fork. `.kwds` values that are numpy scalars
-  (offsets built from integer columns) are coerced to native Python scalars before
-  JSON serialization (`_coerce_scalar`).
+  (`pd.DateOffset(months=3)` → `'DateOffset:{"months": 3}'`). The integer multiplier
+  `.n` is part of the offset (`pd.DateOffset(months=3) * 2` means *six* months:
+  `n == 2`, `kwds == {'months': 3}`), so it is captured under a reserved `"n"` key
+  **only when `n != 1`** (`'DateOffset:{"months": 3, "n": 2}'`); the `n == 1` case
+  keeps the bare-kwds form, so existing files and the plain-read contract are
+  unchanged. Plain strings serialize natively, so the **normal pandas writer is used
+  unchanged** — no custom parquet key-value metadata, no engine fork. `.kwds` values
+  that are numpy scalars (offsets built from integer columns) are coerced to native
+  Python scalars before JSON serialization (`_coerce_scalar`).
 - `PandasForecast.read_parquet(path, *, to_pandas=True)` (a **classmethod**,
   mirroring the module-level `pd.read_parquet`) decodes those strings back to
-  `pd.DateOffset`. It returns a **plain `pd.DataFrame` by default** (so the subclass
-  doesn't leak downstream); pass `to_pandas=False` for a `PandasForecast`.
+  `pd.DateOffset` (via `pd.DateOffset(n=n, **kwds)`, restoring the `"n"` multiplier).
+  It returns a **plain `pd.DataFrame` by default** (so the subclass doesn't leak
+  downstream); pass `to_pandas=False` for a `PandasForecast`.
 - Design choices to preserve: each value is self-describing, so multi-keyword
-  offsets and mixed units across leadtimes round-trip for free. Offsets `.kwds`
-  can't capture (anchored `MonthEnd`, bare `pd.DateOffset(2)` with the count in
-  `.n`) are left untouched and degrade to the normal parquet behaviour. `to_parquet`
-  never mutates `self`. A file written this way is still readable by plain
+  offsets, mixed units across leadtimes, and scaled offsets (`pd.DateOffset(...) * 2`,
+  bare `pd.DateOffset(2)`) round-trip for free. Values that are not exactly a
+  `pd.DateOffset` (anchored offsets such as `MonthEnd`) are left untouched and degrade
+  to the normal parquet behaviour. `to_parquet` never mutates `self`. A file written this way is still readable by plain
   `pd.read_parquet` (leadtime then holds the encoded strings) — keep that
   backward-compat contract; tests live in
   [tests/test_pandas_forecast.py](tests/test_pandas_forecast.py).

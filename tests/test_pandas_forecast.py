@@ -94,6 +94,43 @@ class TestRoundTripOffsets:
         restored = sorted({o.kwds["months"] for o in _leadtime_level(back)})
         assert restored == [1, 6]
 
+    def test_scaled_offset_multiplier_n(self, tmp_path):
+        # A scaled offset carries its factor in .n: pd.DateOffset(months=3) * 2
+        # has n == 2, kwds == {'months': 3} and means SIX months.  Encoding
+        # .kwds alone would silently drop the factor of n (reconstruct 3 months).
+        three, six = pd.DateOffset(months=3), pd.DateOffset(months=3) * 2
+        assert six.n == 2 and six.kwds == {"months": 3}
+        df = _long_frame([three, six])
+        path = tmp_path / "scaled.parquet"
+        PandasForecast(df).to_parquet(path)
+        back = PandasForecast.read_parquet(path)
+
+        anchor = pd.Timestamp("2020-01-01")
+        landed = sorted({(anchor + o) for o in _leadtime_level(back)})
+        # 3 months -> April, 6 months -> July (NOT two April landings).
+        assert landed == [pd.Timestamp("2020-04-01"), pd.Timestamp("2020-07-01")]
+
+    def test_bare_offset_count_in_n(self, tmp_path):
+        # pd.DateOffset(2) has empty kwds and n == 2; its whole meaning is in .n.
+        bare = pd.DateOffset(2)
+        assert bare.n == 2 and not bare.kwds
+        df = _long_frame([bare])
+        path = tmp_path / "bare.parquet"
+        PandasForecast(df).to_parquet(path)
+        back = PandasForecast.read_parquet(path)
+        restored = _leadtime_level(back)[0]
+        assert restored.n == 2 and not restored.kwds
+        assert pd.Timestamp("2020-01-01") + restored == pd.Timestamp("2020-01-03")
+
+    def test_n_one_disk_format_unchanged(self, tmp_path):
+        # The n == 1 common case must keep the bare-kwds on-disk form (no "n"
+        # key), preserving backward compatibility and the plain-read contract.
+        df = _long_frame([pd.DateOffset(months=3)])
+        path = tmp_path / "n1.parquet"
+        PandasForecast(df).to_parquet(path)
+        plain = pd.read_parquet(path)
+        assert plain.index.get_level_values("leadtime")[0] == _SENTINEL + '{"months": 3}'
+
     def test_alias_lead_time(self, tmp_path):
         df = _long_frame([pd.DateOffset(months=4)])
         df.index = df.index.set_names(["production_datetime", "lead_time"])

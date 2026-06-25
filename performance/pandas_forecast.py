@@ -12,17 +12,23 @@ stored in an index or in the columns, so a plain ``df.to_parquet(...)`` raises.
 :meth:`~PandasForecast.read_parquet` classmethod that make such leadtimes survive a
 parquet round-trip.  Each ``DateOffset`` value in a ``leadtime`` level is encoded on
 write as a sentinel-prefixed JSON string of its keyword arguments
-(``pd.DateOffset(months=3)`` -> ``'DateOffset:{"months": 3}'``).  Those are plain
-strings, which every parquet engine serializes natively, so the normal
-``DataFrame.to_parquet`` writer is used unchanged.  On read, values carrying the
-sentinel are decoded back to ``pd.DateOffset(**kwds)``.
+(``pd.DateOffset(months=3)`` -> ``'DateOffset:{"months": 3}'``).  The integer
+multiplier ``.n`` is part of the offset too -- ``pd.DateOffset(months=3) * 2`` means
+*six* months (``n == 2``, ``kwds == {'months': 3}``) -- so it is captured under a
+reserved ``"n"`` key whenever it is not ``1``
+(``'DateOffset:{"months": 3, "n": 2}'``); the ``n == 1`` case keeps the bare-kwds
+form for backward compatibility.  These are plain strings, which every parquet engine
+serializes natively, so the normal ``DataFrame.to_parquet`` writer is used unchanged.
+On read, values carrying the sentinel are decoded back to
+``pd.DateOffset(n=n, **kwds)``.
 
 Because every value is self-describing, no custom parquet key-value metadata is
-needed, mixed units across leadtimes (some ``months``, some ``years``) and
-multi-keyword offsets (``pd.DateOffset(months=1, days=15)``) round-trip for free, and
-the encoding is engine-agnostic.  Anything ``.kwds`` cannot capture (anchored offsets
-such as ``MonthEnd``, or a plain ``pd.DateOffset(2)`` whose count lives in ``.n``) is
-left untouched and degrades to the normal parquet behaviour.
+needed, mixed units across leadtimes (some ``months``, some ``years``),
+multi-keyword offsets (``pd.DateOffset(months=1, days=15)``) and scaled offsets
+(``pd.DateOffset(months=3) * 2``, ``pd.DateOffset(2)``) round-trip for free, and the
+encoding is engine-agnostic.  Offsets that are not exactly a ``pd.DateOffset``
+(anchored offsets such as ``MonthEnd``) are left untouched and degrade to the normal
+parquet behaviour.
 
 Examples
 --------
@@ -77,36 +83,65 @@ def _coerce_scalar(obj):
 def _encode_offset(value):
     """Encode a *plain* ``pd.DateOffset`` as a sentinel JSON string.
 
+    Both the keyword arguments (``.kwds``) **and** the integer multiplier
+    (``.n``) are captured, because ``.kwds`` alone is not the full offset: a
+    scaled offset such as ``pd.DateOffset(months=3) * 2`` has ``n == 2`` and
+    ``kwds == {'months': 3}`` and means *six* months, while a bare
+    ``pd.DateOffset(2)`` carries its whole meaning in ``.n`` with empty kwds.
+    Reconstructing from ``kwds`` alone would silently drop the factor of ``n``.
+
+    To keep the common ``n == 1`` case (e.g. ``pd.DateOffset(months=3)``) on-disk
+    representation unchanged -- so existing files and the plain-``pd.read_parquet``
+    contract still hold -- the multiplier is added under a reserved ``"n"`` key
+    **only when** ``n != 1`` (``'DateOffset:{"months": 3, "n": 2}'``); for
+    ``n == 1`` the payload is just the kwds (``'DateOffset:{"months": 3}'``).
+
     ``.kwds`` values may be numpy scalars (offsets built from integer columns);
     they are coerced to native Python scalars before serialization.
 
-    Returns ``None`` when *value* is not a cleanly representable offset (anything
-    that is not exactly a ``pd.DateOffset`` with ``n == 1`` and a non-empty
-    ``.kwds`` -- e.g. a ``Timedelta``, an anchored ``MonthEnd``, or a bare
-    ``pd.DateOffset(2)`` whose count lives in ``.n``).
+    Returns ``None`` when *value* is not exactly a ``pd.DateOffset`` (e.g. a
+    ``Timedelta`` or an anchored ``MonthEnd``), or when it carries nothing to
+    encode (``pd.DateOffset()`` with ``n == 1`` and empty kwds), or when ``.kwds``
+    is not JSON-serializable. Such values are left untouched and degrade to the
+    normal parquet behaviour.
     """
-    if type(value) is pd.DateOffset and value.n == 1 and value.kwds:
+    if type(value) is pd.DateOffset:
+        payload = dict(value.kwds)
+        if value.n != 1:
+            payload["n"] = value.n
+        if not payload:
+            return None
         try:
-            payload = json.dumps(value.kwds, sort_keys=True, default=_coerce_scalar)
+            encoded = json.dumps(payload, sort_keys=True, default=_coerce_scalar)
         except TypeError:
             return None
-        return _SENTINEL + payload
+        return _SENTINEL + encoded
     return None
 
 
 def _decode_offset(value):
     """Decode a sentinel JSON string back to a ``pd.DateOffset``.
 
-    Any value that is not a string carrying the sentinel, or whose payload is not a
-    JSON object with keys recognised by ``pd.DateOffset``, is returned unchanged.
+    The reserved ``"n"`` key (if present) restores the integer multiplier; the
+    remaining keys are the ``pd.DateOffset`` keyword arguments. Any value that is
+    not a string carrying the sentinel, or whose payload is not a JSON object
+    whose non-``"n"`` keys are all recognised by ``pd.DateOffset``, is returned
+    unchanged.
     """
     if isinstance(value, str) and value.startswith(_SENTINEL):
         try:
-            kwds = json.loads(value[len(_SENTINEL):])
+            payload = json.loads(value[len(_SENTINEL):])
         except (ValueError, TypeError):
             return value
-        if isinstance(kwds, dict) and kwds and set(kwds) <= _VALID_OFFSET_KWARGS:
-            return pd.DateOffset(**kwds)
+        if isinstance(payload, dict) and payload:
+            n = payload.get("n", 1)
+            kwds = {k: v for k, v in payload.items() if k != "n"}
+            if (
+                isinstance(n, int)
+                and not isinstance(n, bool)
+                and set(kwds) <= _VALID_OFFSET_KWARGS
+            ):
+                return pd.DateOffset(n=n, **kwds)
     return value
 
 
