@@ -213,6 +213,79 @@ def _decode_axis(axis):
 
 
 # ---------------------------------------------------------------------------
+# Timedelta column-index read workaround (pyarrow <-> pandas 3)
+# ---------------------------------------------------------------------------
+
+
+def _is_timedelta_precision_error(err):
+    """True if *err* is the pandas-3 precision-less-timedelta cast failure.
+
+    A ``pd.Timedelta`` leadtime carried in the *columns* (as opposed to the
+    index) hits this: the columns of a ``MultiIndex`` are stringified into the
+    parquet field names, so the level's real dtype survives only in the
+    ``column_indexes`` pandas metadata. On read, pyarrow's
+    ``_reconstruct_columns_from_metadata`` restores it by first casting the raw
+    (string) level to ``np.dtype("m8")`` -- a timedelta with *no precision* --
+    before the correct cast to the recorded unit, and pandas 3 rejects that
+    intermediate step with ``"Passing in 'timedelta' dtype with no precision
+    is not allowed"``. Plain :func:`pandas.read_parquet` therefore raises before
+    any of our decoding runs.
+    """
+    message = str(err)
+    return "timedelta" in message and "no precision" in message
+
+
+def _sanitise_timedelta_column_metadata(table):
+    """Neutralise ``timedelta64`` column-index entries in *table*'s metadata.
+
+    Rewrites only each affected column-index level's ``pandas_type`` (from
+    ``"timedelta64"`` to ``"unicode"``) while **keeping** its ``numpy_type``
+    (e.g. ``"timedelta64[us]"``). That makes pyarrow skip the precision-less
+    intermediate ``astype`` and convert the level straight to the recorded unit
+    via its final ``astype(numpy_type)``, yielding a proper ``TimedeltaIndex``
+    with no fix-up left for us to do.
+
+    Returns *table* unchanged when there is no such level, so this is a no-op for
+    every other file.
+    """
+    metadata = table.schema.metadata or {}
+    raw = metadata.get(b"pandas")
+    if raw is None:
+        return table
+    pandas_metadata = json.loads(raw)
+    changed = False
+    for column_index in pandas_metadata.get("column_indexes", []):
+        if column_index.get("pandas_type") == "timedelta64":
+            column_index["pandas_type"] = "unicode"
+            changed = True
+    if not changed:
+        return table
+    new_metadata = dict(metadata)
+    new_metadata[b"pandas"] = json.dumps(pandas_metadata).encode("utf-8")
+    return table.replace_schema_metadata(new_metadata)
+
+
+def _read_parquet_timedelta_safe(path, columns=None, filters=None, filesystem=None):
+    """Read a parquet file whose columns carry a ``timedelta64`` level.
+
+    Fallback for :meth:`PandasForecast.read_parquet` when plain
+    :func:`pandas.read_parquet` trips over the pyarrow<->pandas-3 timedelta
+    column-index bug (see :func:`_is_timedelta_precision_error`). Reads the arrow
+    table directly, neutralises the offending metadata
+    (:func:`_sanitise_timedelta_column_metadata`) and lets pyarrow do the
+    conversion. Supports the common ``columns`` / ``filters`` / ``filesystem``
+    read options.
+    """
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(
+        path, columns=columns, filters=filters, filesystem=filesystem
+    )
+    table = _sanitise_timedelta_column_metadata(table)
+    return table.to_pandas()
+
+
+# ---------------------------------------------------------------------------
 # Public class
 # ---------------------------------------------------------------------------
 
@@ -267,8 +340,25 @@ class PandasForecast(pd.DataFrame):
         plain :class:`pandas.DataFrame`, so the subclass type never leaks into
         downstream code; pass ``to_pandas=False`` to get a :class:`PandasForecast`
         instead (e.g. to chain another :meth:`to_parquet`).
+
+        A ``pd.Timedelta`` leadtime carried in the *columns* trips a
+        pyarrow<->pandas-3 reconstruction bug in plain
+        :func:`pandas.read_parquet` (see :func:`_is_timedelta_precision_error`);
+        such files are transparently recovered via
+        :func:`_read_parquet_timedelta_safe` (honouring the common ``columns`` /
+        ``filters`` / ``filesystem`` options).
         """
-        df = pd.read_parquet(path, *args, **kwargs)
+        try:
+            df = pd.read_parquet(path, *args, **kwargs)
+        except ValueError as err:
+            if not _is_timedelta_precision_error(err):
+                raise
+            df = _read_parquet_timedelta_safe(
+                path,
+                columns=kwargs.get("columns"),
+                filters=kwargs.get("filters"),
+                filesystem=kwargs.get("filesystem"),
+            )
         new_index = _decode_axis(df.index)
         if new_index is not None:
             df.index = new_index

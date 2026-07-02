@@ -43,7 +43,7 @@ from .metrics import (                                  # noqa: F401
     fair_brier_skill_score,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.6.2"
 __all__ = [
     "ForecastPerformance",
     "PandasForecast",

@@ -82,6 +82,17 @@ an index or columns. `PandasForecast`
   `pd.read_parquet` (leadtime then holds the encoded strings) — keep that
   backward-compat contract; tests live in
   [tests/test_pandas_forecast.py](tests/test_pandas_forecast.py).
+- `read_parquet` also transparently recovers files whose **columns** carry a
+  `pd.Timedelta` leadtime level. A `MultiIndex`'s column names are stringified
+  into the parquet field names, so that level's timedelta dtype survives only in
+  pandas' `column_indexes` metadata; on read, pyarrow (with pandas 3)
+  reconstructs it via a precision-less `astype(np.dtype("m8"))` that plain
+  `pd.read_parquet` rejects (`"Passing in 'timedelta' dtype with no
+  precision..."`). `read_parquet` catches that specific `ValueError` and retries
+  through `_read_parquet_timedelta_safe`, which rewrites only the level's
+  `pandas_type` (`timedelta64`→`unicode`) while keeping its `numpy_type`, so
+  pyarrow restores the proper `TimedeltaIndex` itself. The recovery path honours
+  the common `columns` / `filters` / `filesystem` options.
 - It is a `pd.DataFrame` subclass (so `isinstance(x, pd.DataFrame)` holds and the
   type propagates through ops via `_constructor`). `to_pandas()` returns a plain
   `pd.DataFrame` for downstream code that does `type(x) is pd.DataFrame` checks,

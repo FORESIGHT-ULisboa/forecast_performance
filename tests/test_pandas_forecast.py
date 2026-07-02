@@ -190,6 +190,32 @@ class TestPassThrough:
             pd.Timedelta("2D"),
         ]
 
+    def test_timedelta_leadtime_in_columns(self, tmp_path):
+        # A Timedelta leadtime carried in a *column* level round-trips. The
+        # columns of a MultiIndex are stringified into the parquet field names,
+        # so the level's timedelta dtype survives only in pandas' column_indexes
+        # metadata; on read, pyarrow (with pandas 3) reconstructs it via a
+        # precision-less astype that plain pd.read_parquet chokes on. read_parquet
+        # must transparently recover such files.
+        leadtimes = [pd.Timedelta("1D"), pd.Timedelta("2D"), pd.Timedelta("3D")]
+        cols = pd.MultiIndex.from_product(
+            [leadtimes, range(2)], names=["leadtime", "ensemble_member"]
+        )
+        df = pd.DataFrame(
+            np.random.default_rng(1).normal(size=(len(DATES), len(cols))),
+            index=DATES,
+            columns=cols,
+        )
+        df.index.name = "production_datetime"
+        path = tmp_path / "td_columns.parquet"
+        PandasForecast(df).to_parquet(path)
+
+        back = PandasForecast.read_parquet(path)
+        leadtime_level = back.columns.get_level_values("leadtime")
+        assert pd.api.types.is_timedelta64_dtype(leadtime_level)
+        assert list(leadtime_level.unique()) == leadtimes
+        np.testing.assert_array_equal(back.to_numpy(), df.to_numpy())
+
     def test_no_leadtime_level(self, tmp_path):
         df = pd.DataFrame({"values": [1.0, 2.0, 3.0]}, index=DATES[:3])
         df.index.name = "production_datetime"
