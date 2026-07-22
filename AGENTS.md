@@ -100,6 +100,37 @@ an index or columns. `PandasForecast`
   the expected arg. There is no extra instance state (`_metadata = []`), so the
   downcast is loss-free.
 
+## Timezone conversion
+
+`PandasForecast.tz_conversion(tz_from="UTC", tz_new="UTC", duplicates="mean")`
+re-expresses a forecast frame from one timezone to another. It returns a new
+`PandasForecast` and never mutates `self`; both defaults (`"UTC"`) make it a
+no-op.
+
+- It **anchors on `event_datetime`** (the observation time). When
+  `event_datetime` is absent it is derived as `production_datetime + leadtime`;
+  when only `production_datetime` is present (no `event_datetime`, no `leadtime`)
+  that level is converted directly instead.
+- `production_datetime` is **dropped before the conversion** (so a DST fall-back
+  does not split the duplicate rows on it) and, when it was originally present,
+  **recreated at the end** as `event_datetime - leadtime`. A missing `leadtime`
+  needed for that step is derived as `event_datetime - production_datetime`.
+- `leadtime` is a **duration** and is never timezone-converted;
+  `non_exceedance` / `ensemble_member` and the value column(s) are preserved (the
+  index is only ever re-ordered to `_LEVEL_ORDER`, never stripped of levels).
+- **Awareness is preserved**: a tz-naive frame is read as wall-clock time in
+  `tz_from`, converted, and returned as naive wall-clock time in `tz_new`
+  (`tz_localize(tz_from).tz_convert(tz_new).tz_localize(None)`); a tz-aware frame
+  is converted and stays aware (`tz_from` ignored).
+- On the naive path a **DST transition** makes some wall-clock times vanish
+  (spring-forward — left as a gap) or occur twice (fall-back). The duplicate rows
+  are collapsed with `duplicates` (`"mean"` default / `"first"` / `"last"`).
+- A pre-screen (`_screen_index`) normalises level-name aliases via
+  `_normalise_name`, promotes an unnamed datetime level, warns if a
+  `production`/`event` level lives only in the columns, and raises `ValueError`
+  when the row index has no absolute datetime level. Tests live in
+  [tests/test_pandas_forecast.py](tests/test_pandas_forecast.py) (`TestTzConversion`).
+
 ## The metric system
 
 - Every public metric is a `Metric` (see

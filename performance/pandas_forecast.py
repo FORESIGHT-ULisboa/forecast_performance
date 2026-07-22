@@ -30,6 +30,13 @@ encoding is engine-agnostic.  Offsets that are not exactly a ``pd.DateOffset``
 (anchored offsets such as ``MonthEnd``) are left untouched and degrade to the normal
 parquet behaviour.
 
+:class:`PandasForecast` also provides :meth:`~PandasForecast.tz_conversion`, which
+re-expresses a forecast frame from one timezone into another.  It anchors on the
+``event_datetime`` level (deriving it, or ``leadtime``, from the others when
+missing), preserves tz-awareness (naive in -> naive wall-clock out), leaves
+``leadtime`` untouched as a duration, and collapses the duplicate rows a
+daylight-saving fall-back produces.
+
 Examples
 --------
 >>> from performance import PandasForecast
@@ -41,10 +48,11 @@ Examples
 """
 
 import json
+import warnings
 
 import pandas as pd
 
-from .forecast_performance import _normalise_name
+from .forecast_performance import _LEVEL_ORDER, _normalise_name
 
 # Prefix marking a leadtime value as an encoded ``pd.DateOffset``.
 _SENTINEL = "DateOffset:"
@@ -286,6 +294,141 @@ def _read_parquet_timedelta_safe(path, columns=None, filters=None, filesystem=No
 
 
 # ---------------------------------------------------------------------------
+# Timezone conversion
+# ---------------------------------------------------------------------------
+
+#: Aggregations accepted by ``tz_conversion`` for collapsing DST-duplicated rows.
+_DUPLICATE_STRATEGIES = frozenset({"mean", "first", "last"})
+
+
+def _convert_datetime_index(values, tz_from, tz_new):
+    """Convert a datetime level from *tz_from* to *tz_new*, preserving awareness.
+
+    A tz-naive input is interpreted as wall-clock time in *tz_from*: it is
+    localized to *tz_from*, converted to *tz_new*, then stripped back to naive
+    wall-clock time in *tz_new*, so a naive frame stays naive.  A tz-aware input
+    is simply converted to *tz_new* (staying aware) and *tz_from* is ignored.
+
+    Returns a :class:`pandas.DatetimeIndex`.  On the naive path a daylight-saving
+    fall-back collapses two instants onto the same wall-clock timestamp (handled
+    downstream by de-duplication) and a spring-forward leaves a gap.
+    """
+    index = pd.DatetimeIndex(values)
+    was_naive = index.tz is None
+    if was_naive:
+        index = index.tz_localize(tz_from)
+    index = index.tz_convert(tz_new)
+    if was_naive:
+        index = index.tz_localize(None)
+    return index
+
+
+def _screen_index(df):
+    """Pre-screen and canonicalise *df*'s row index for tz conversion.
+
+    Normalises index level names via :func:`_normalise_name`, promotes an unnamed
+    datetime level to ``production_datetime`` (then ``event_datetime``) -- mirroring
+    ``ForecastPerformance.normalize_dataframe`` -- and reports which of the
+    ``production_datetime`` / ``event_datetime`` / ``leadtime`` levels are present
+    in the row index.
+
+    Warns (``UserWarning``) when a ``production`` / ``event`` datetime level is
+    found only in the *columns* (tz conversion acts on the row index only), and
+    raises ``ValueError`` when the row index carries no absolute datetime level to
+    convert.
+
+    Returns ``(df, present)``: *df* is the same frame with canonical index names
+    and *present* is a ``dict`` mapping each of the three level names to a bool.
+    """
+    index = df.index
+    is_multi = isinstance(index, pd.MultiIndex)
+    names = (
+        [_normalise_name(n) for n in index.names]
+        if is_multi
+        else [_normalise_name(index.name)]
+    )
+
+    # Promote an unnamed datetime level to production_datetime (then event_datetime).
+    for position, name in enumerate(names):
+        dtype = str(index.get_level_values(position).dtype)
+        if name is None and dtype.startswith("datetime"):
+            names[position] = (
+                "production_datetime"
+                if "production_datetime" not in names
+                else "event_datetime"
+            )
+
+    if is_multi:
+        df.index = index.set_names(names)
+    else:
+        df.index = index.rename(names[0])
+
+    present = {
+        level: level in names
+        for level in ("production_datetime", "event_datetime", "leadtime")
+    }
+
+    column_names = (
+        [_normalise_name(n) for n in df.columns.names]
+        if isinstance(df.columns, pd.MultiIndex)
+        else [_normalise_name(df.columns.name)]
+    )
+    for level in ("production_datetime", "event_datetime"):
+        if not present[level] and level in column_names:
+            warnings.warn(
+                "tz_conversion operates on the row index; the '%s' level is in "
+                "the columns and will not be converted." % level,
+                UserWarning,
+                stacklevel=3,
+            )
+
+    if not present["production_datetime"] and not present["event_datetime"]:
+        raise ValueError(
+            "tz_conversion needs a 'production_datetime' or 'event_datetime' level "
+            "in the row index to convert; found index levels: %s." % names
+        )
+
+    return df, present
+
+
+def _collapse_duplicates(df, strategy):
+    """Collapse rows with duplicate full-index tuples using *strategy*.
+
+    A daylight-saving fall-back maps two instants onto the same wall-clock
+    timestamp, so after conversion the (event_datetime, leadtime, ...) key can
+    repeat.  Grouping by every index level aggregates only those genuine
+    duplicates; a frame with a unique index is returned untouched.  ``sort=False``
+    keeps first-appearance order and avoids sorting unorderable ``DateOffset``
+    leadtime levels.
+    """
+    if not df.index.duplicated().any():
+        return df
+    grouped = df.groupby(level=list(range(df.index.nlevels)), sort=False)
+    return getattr(grouped, strategy)()
+
+
+def _reorder_levels(df):
+    """Restore the canonical ``_LEVEL_ORDER`` on *df*'s index without dropping any.
+
+    Levels not in ``_LEVEL_ORDER`` (e.g. an unexpected extra level) are kept and
+    appended after the canonical ones.  A single-level index, an already-ordered
+    index, or any index that cannot be reordered unambiguously is returned as-is.
+    """
+    if not isinstance(df.index, pd.MultiIndex):
+        return df
+    names = list(df.index.names)
+    new_order = [n for n in _LEVEL_ORDER if n in names] + [
+        n for n in names if n not in _LEVEL_ORDER
+    ]
+    if new_order == names:
+        return df
+    try:
+        return df.reorder_levels(new_order)
+    except (KeyError, ValueError):
+        return df
+
+
+# ---------------------------------------------------------------------------
 # Public class
 # ---------------------------------------------------------------------------
 
@@ -386,3 +529,98 @@ class PandasForecast(pd.DataFrame):
         keeps its reconstructed ``pd.DateOffset`` values.
         """
         return pd.DataFrame(self)
+
+    def tz_conversion(self, tz_from="UTC", tz_new="UTC", duplicates="mean"):
+        """Re-express the forecast's datetime levels from *tz_from* to *tz_new*.
+
+        The conversion **anchors on** ``event_datetime`` (the observation time):
+
+        * If ``event_datetime`` is present it is the level that gets converted.
+        * If it is absent it is derived first as
+          ``production_datetime + leadtime``.
+        * If neither ``event_datetime`` nor ``leadtime`` is present, there is
+          nothing to anchor on and ``production_datetime`` is converted directly.
+        * A missing ``leadtime`` is derived as
+          ``event_datetime - production_datetime`` when needed to rebuild
+          ``production_datetime``.
+
+        ``production_datetime`` is deleted before the conversion (so a
+        daylight-saving fall-back does not split the duplicate rows on it) and,
+        when it was originally present, recreated at the end as
+        ``event_datetime - leadtime``.  ``leadtime`` is a duration and is never
+        timezone-converted; ``non_exceedance`` / ``ensemble_member`` and the value
+        column(s) are preserved.
+
+        Timezone-awareness is preserved: a tz-naive frame is interpreted as
+        wall-clock time in *tz_from*, converted, and returned as naive wall-clock
+        time in *tz_new*; a tz-aware frame is converted and stays aware (with
+        *tz_from* ignored).  Both defaults (``"UTC"``) make this a no-op.
+
+        On the naive path a daylight-saving transition can make some wall-clock
+        times **vanish** (spring-forward -- left as a gap) or **occur twice**
+        (fall-back -- collapsed).  *duplicates* selects how the duplicated rows are
+        collapsed: ``"mean"`` (default), ``"first"`` or ``"last"``.
+
+        Returns a new :class:`PandasForecast`; ``self`` is never mutated.
+        """
+        if duplicates not in _DUPLICATE_STRATEGIES:
+            raise ValueError(
+                "duplicates must be one of %s; got %r."
+                % (sorted(_DUPLICATE_STRATEGIES), duplicates)
+            )
+
+        df = pd.DataFrame(self).copy()
+        df, present = _screen_index(df)
+
+        def _convert_level(frame, name):
+            is_multi = isinstance(frame.index, pd.MultiIndex)
+            position = list(frame.index.names).index(name) if is_multi else 0
+            converted = _convert_datetime_index(
+                frame.index.get_level_values(name), tz_from, tz_new
+            )
+            frame.index = _replace_level_values(
+                frame.index, position, is_multi, converted
+            )
+            return frame
+
+        anchor_on_production = (
+            present["production_datetime"]
+            and not present["event_datetime"]
+            and not present["leadtime"]
+        )
+
+        if anchor_on_production:
+            df = _convert_level(df, "production_datetime")
+            df = _collapse_duplicates(df, duplicates)
+        else:
+            # Derive event_datetime (anchor) and, if needed, leadtime.
+            if not present["event_datetime"]:
+                event = df.index.get_level_values(
+                    "production_datetime"
+                ) + df.index.get_level_values("leadtime")
+                df = df.assign(event_datetime=event).set_index(
+                    "event_datetime", append=True
+                )
+            if not present["leadtime"] and present["production_datetime"]:
+                lead = df.index.get_level_values(
+                    "event_datetime"
+                ) - df.index.get_level_values("production_datetime")
+                df = df.assign(leadtime=lead).set_index("leadtime", append=True)
+
+            had_production = present["production_datetime"]
+            if had_production:
+                df = df.droplevel("production_datetime")
+
+            df = _convert_level(df, "event_datetime")
+            df = _collapse_duplicates(df, duplicates)
+
+            if had_production:
+                production = df.index.get_level_values(
+                    "event_datetime"
+                ) - df.index.get_level_values("leadtime")
+                df = df.assign(production_datetime=production).set_index(
+                    "production_datetime", append=True
+                )
+
+        df = _reorder_levels(df)
+        return self._constructor(df)

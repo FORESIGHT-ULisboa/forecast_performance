@@ -292,3 +292,125 @@ class TestDegrade:
         # cannot serialize the offset and raises.
         with pytest.raises(Exception):
             PandasForecast(df).to_parquet(path)
+
+
+# ---------------------------------------------------------------------------
+# Timezone conversion
+# ---------------------------------------------------------------------------
+
+
+def _event_frame(start, periods, freq="h", tz=None):
+    """Single-column frame with a DatetimeIndex named ``event_datetime``."""
+    idx = pd.date_range(start, periods=periods, freq=freq, tz=tz)
+    idx.name = "event_datetime"
+    return pd.DataFrame({"values": np.arange(periods, dtype=float)}, index=idx)
+
+
+class TestTzConversion:
+    def test_utc_noop_returns_equal_frame(self):
+        df = _event_frame("2021-06-01", 24)
+        out = PandasForecast(df).tz_conversion("UTC", "UTC")
+        # check_freq=False: converting drops the index frequency (meaningless once
+        # DST can gap the series), but the timestamps and values are unchanged.
+        pd.testing.assert_frame_equal(pd.DataFrame(out), df, check_freq=False)
+
+    def test_roundtrip_restores_naive_index(self):
+        df = _event_frame("2021-06-01", 24)  # no DST transition in-window
+        mid = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        back = PandasForecast(mid).tz_conversion("America/New_York", "UTC")
+        pd.testing.assert_frame_equal(pd.DataFrame(back), df, check_freq=False)
+
+    def test_naive_input_stays_naive(self):
+        df = _event_frame("2021-06-01", 5)
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        assert out.index.get_level_values("event_datetime").tz is None
+
+    def test_aware_input_stays_aware(self):
+        df = _event_frame("2021-06-01", 5, tz="UTC")
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        tz = out.index.get_level_values("event_datetime").tz
+        assert str(tz) == "America/New_York"
+
+    def test_dst_fallback_collapses_with_mean(self):
+        # Naive UTC hours spanning the New York fall-back: 05:00 and 06:00 UTC
+        # both map to 01:00 local, so their values (1.0, 2.0) average to 1.5.
+        df = _event_frame("2021-11-07 04:00", 4)
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        assert len(out) == 3
+        assert out.loc[pd.Timestamp("2021-11-07 01:00"), "values"] == 1.5
+
+    def test_dst_fallback_first_and_last(self):
+        df = _event_frame("2021-11-07 04:00", 4)
+        dup = pd.Timestamp("2021-11-07 01:00")
+        first = PandasForecast(df).tz_conversion(
+            "UTC", "America/New_York", duplicates="first"
+        )
+        last = PandasForecast(df).tz_conversion(
+            "UTC", "America/New_York", duplicates="last"
+        )
+        assert first.loc[dup, "values"] == 1.0
+        assert last.loc[dup, "values"] == 2.0
+
+    def test_dst_spring_forward_leaves_gap(self):
+        # Naive UTC hours spanning the New York spring-forward: local 02:00 is
+        # skipped (a gap, not an error) and rows are neither dropped nor merged.
+        df = _event_frame("2021-03-14 05:00", 4)
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        events = out.index.get_level_values("event_datetime")
+        assert len(out) == 4
+        assert pd.Timestamp("2021-03-14 02:00") not in events
+        assert pd.Timestamp("2021-03-14 03:00") in events
+
+    def test_production_recreated_and_leadtime_preserved(self):
+        df = _long_frame([pd.Timedelta("6h")])  # (production_datetime, leadtime)
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        # event_datetime derived; production_datetime dropped then recreated.
+        assert list(out.index.names) == [
+            "production_datetime",
+            "event_datetime",
+            "leadtime",
+        ]
+        lead = out.index.get_level_values("leadtime")
+        assert (lead == pd.Timedelta("6h")).all()  # duration untouched
+        event = out.index.get_level_values("event_datetime")
+        prod = out.index.get_level_values("production_datetime")
+        assert ((event - prod) == pd.Timedelta("6h")).all()
+
+    def test_preserves_extra_levels_and_dateoffset_leadtime(self):
+        dates = pd.date_range("2020-01-01", periods=3, freq="D")
+        quantiles = [0.1, 0.5, 0.9]
+        idx = pd.MultiIndex.from_product(
+            [dates, [pd.DateOffset(months=1)], quantiles],
+            names=["production_datetime", "leadtime", "non_exceedance"],
+        )
+        df = pd.DataFrame({"values": np.arange(len(idx), dtype=float)}, index=idx)
+        out = PandasForecast(df).tz_conversion("UTC", "America/New_York")
+        assert list(out.index.names) == [
+            "production_datetime",
+            "event_datetime",
+            "leadtime",
+            "non_exceedance",
+        ]
+        # non_exceedance level survives untouched.
+        assert sorted(set(out.index.get_level_values("non_exceedance"))) == quantiles
+        # leadtime is left as a DateOffset duration.
+        lead = out.index.get_level_values("leadtime")
+        assert all(
+            isinstance(o, pd.DateOffset) and o.kwds == {"months": 1} for o in lead
+        )
+        # event_datetime is converted from UTC to New York (EST, -5h): the
+        # derived 00:00 event becomes 19:00 the previous day.
+        assert (out.index.get_level_values("event_datetime").hour == 19).all()
+
+    def test_leadtime_only_raises(self):
+        idx = pd.Index([pd.Timedelta("1D"), pd.Timedelta("2D")], name="leadtime")
+        df = pd.DataFrame({"values": [1.0, 2.0]}, index=idx)
+        with pytest.raises(ValueError):
+            PandasForecast(df).tz_conversion("UTC", "America/New_York")
+
+    def test_invalid_duplicates_raises(self):
+        df = _event_frame("2021-06-01", 3)
+        with pytest.raises(ValueError):
+            PandasForecast(df).tz_conversion(
+                "UTC", "America/New_York", duplicates="median"
+            )
