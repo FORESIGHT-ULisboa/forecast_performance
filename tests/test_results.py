@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from performance import Results, rmse, mae
+from forecast_performance import Results, rmse, mae
 
 
 class TestResultsInit:

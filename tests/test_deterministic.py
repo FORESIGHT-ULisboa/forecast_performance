@@ -1,9 +1,9 @@
-"""Tests for deterministic metric functions in performance.metrics.deterministic."""
+"""Tests for deterministic metric functions in forecast_performance.metrics.deterministic."""
 
 import numpy as np
 import pytest
 
-from performance.metrics.deterministic import (
+from forecast_performance.metrics.deterministic import (
     pearson,
     spearman,
     nse,

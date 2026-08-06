@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from performance import ForecastPerformance
+from forecast_performance import ForecastPerformance
 
 # ---------------------------------------------------------------------------
 # Real daily parquet datasets

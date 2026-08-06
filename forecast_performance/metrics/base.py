@@ -7,7 +7,7 @@ that **is its own name**.  It subclasses :class:`str`, so
 * ``str(rmse) == rmse == "rmse"`` — it stringifies to its name,
 * ``rmse.__name__ == "rmse"`` — the ``__name__`` attribute still works,
 * it hashes, sorts and pivots inside a :class:`~pandas.DataFrame` exactly like
-  the plain name string (handy for :class:`~performance.Results`),
+  the plain name string (handy for :class:`~forecast_performance.Results`),
 * ``rmse(data, reference)`` still calls the underlying implementation.
 
 This lets callers pass either the handle (``rmse``) or the name (``"rmse"``)

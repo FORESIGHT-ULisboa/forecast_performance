@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from performance import ForecastPerformance
+from forecast_performance import ForecastPerformance
 
 
 DATES = pd.date_range("2020-01-01", periods=10, freq="D")

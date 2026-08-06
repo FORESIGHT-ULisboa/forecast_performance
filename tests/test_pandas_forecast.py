@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from performance import PandasForecast
-from performance.pandas_forecast import _SENTINEL
+from forecast_performance import PandasForecast
+from forecast_performance.pandas_forecast import _SENTINEL
 
 
 # ---------------------------------------------------------------------------

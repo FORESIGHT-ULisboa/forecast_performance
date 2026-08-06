@@ -39,7 +39,7 @@ daylight-saving fall-back produces.
 
 Examples
 --------
->>> from performance import PandasForecast
+>>> from forecast_performance import PandasForecast
 >>> pf = PandasForecast(df)            # df has a DateOffset 'leadtime' level
 >>> pf.to_parquet("forecast.parquet")
 >>> back = PandasForecast.read_parquet("forecast.parquet")
@@ -162,7 +162,7 @@ def _find_leadtime_level(axis):
     """Locate the ``leadtime`` level on an ``Index`` or ``MultiIndex``.
 
     Returns ``(name, position, is_multiindex)`` or ``None``.  Aliases (``lead``,
-    ``lead_time``) are matched via :func:`~performance.forecast_performance._normalise_name`,
+    ``lead_time``) are matched via :func:`~forecast_performance.forecast_performance._normalise_name`,
     consistent with the rest of the package.
     """
     if isinstance(axis, pd.MultiIndex):

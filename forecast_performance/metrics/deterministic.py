@@ -3,7 +3,7 @@ Deterministic forecast error metrics.
 
 All functions accept 1-D array-like ``data`` (forecast) and ``reference``
 (observation) and return a scalar.  They are deliberately stateless so they
-can be used independently of :class:`~performance.ForecastPerformance`.
+can be used independently of :class:`~forecast_performance.ForecastPerformance`.
 
 PascalCase aliases are provided for backward compatibility with code that
 previously called them as static methods on ``ForecastPerformance``.

@@ -19,8 +19,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from performance import ForecastPerformance
-from performance import plotly_forecasting as gof
+from forecast_performance import ForecastPerformance
+from forecast_performance import plotly_forecasting as gof
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 Core mathematical routines for probabilistic forecast verification.
 
 All functions are pure (no I/O, no global state) and operate on NumPy arrays.
-They are called internally by :class:`~performance.ForecastPerformance` but
+They are called internally by :class:`~forecast_performance.ForecastPerformance` but
 can also be used standalone.
 
 Shapes

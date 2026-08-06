@@ -1,0 +1,41 @@
+name: Tests
+
+# The matrix mirrors `requires-python = ">=3.11"` and the Python classifiers in
+# pyproject.toml, so the supported-version claim is tested rather than asserted.
+# Fixtures live in the repository (tests/test_datasets_*), so nothing has to be
+# downloaded or generated.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install the package and test dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run the test suite
+        run: pytest -ra
+        env:
+          # The plotting tests select Agg themselves; this is belt-and-braces for a
+          # runner with no display.
+          MPLBACKEND: Agg

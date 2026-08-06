@@ -1,6 +1,6 @@
 """
 Tests for visualisation: the matplotlib ``qq_plot`` method and the Plotly
-helpers in :mod:`performance.plotly_forecasting`.
+helpers in :mod:`forecast_performance.plotly_forecasting`.
 
 Rendering is headless: matplotlib uses the ``Agg`` backend and Plotly figures
 are inspected as data structures (``fig.data`` / ``fig.layout``) without ever
@@ -17,7 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from performance import plotly_forecasting as gof
+from forecast_performance import plotly_forecasting as gof
 
 
 # ---------------------------------------------------------------------------

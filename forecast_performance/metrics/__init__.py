@@ -1,10 +1,10 @@
 """
 Forecast verification metrics.
 
-Every public metric is a :class:`~performance.metrics.base.Metric` — a callable
+Every public metric is a :class:`~forecast_performance.metrics.base.Metric` — a callable
 that stringifies to its own name, so it can be passed either as a handle
 (``rmse``) or as a string (``"rmse"``) interchangeably, and dropped straight
-into a :class:`~performance.Results` table without ``metric.__name__``.
+into a :class:`~forecast_performance.Results` table without ``metric.__name__``.
 
 ``snake_case`` is the primary spelling; ``PascalCase`` aliases are retained for
 backward compatibility.

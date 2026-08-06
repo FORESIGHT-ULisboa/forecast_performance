@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from performance import ForecastPerformance, rmse, mae, nse, crps, fair_crps
-from performance.metrics import probabilistic as prob_metrics
+from forecast_performance import ForecastPerformance, rmse, mae, nse, crps, fair_crps
+from forecast_performance.metrics import probabilistic as prob_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ class TestStoredResultsDecorator:
         call_count = [0]
         original_p_values_ensemble = None
 
-        import performance.metrics.probabilistic as _prob
+        import forecast_performance.metrics.probabilistic as _prob
         original = _prob.p_values_ensemble
 
         def counting_wrapper(*args, **kwargs):
@@ -291,7 +291,7 @@ class TestStoredResultsDecorator:
         lt = pd.Timedelta("0D")
         fp_ensemble.results["ens"] = {}
 
-        import performance.metrics.probabilistic as _prob
+        import forecast_performance.metrics.probabilistic as _prob
         original = _prob.p_values_ensemble
         call_count = [0]
 
@@ -521,7 +521,7 @@ class TestMetricObjects:
 
     def test_usable_as_results_field(self, fp_simple):
         """A Metric drops into a results table without metric.__name__."""
-        from performance import Results
+        from forecast_performance import Results
 
         r = Results("Model", "Metric")
         for metric in (rmse, mae, nse):

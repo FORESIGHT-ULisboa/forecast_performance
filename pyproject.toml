@@ -1,60 +1,79 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+# setuptools>=77 is required for PEP 639 SPDX `license` / `license-files` support.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "forecast-performance"
-version = "0.7.0"
+version = "1.0.0"
 description = "Evaluation metrics and diagnostics for deterministic and probabilistic forecasts"
 readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "FORESIGHT", email = "jose.matos@tecnico.ulisboa.pt" },
 ]
 keywords = ["forecast", "verification", "metrics", "crps", "ensemble", "probabilistic", "hydrology"]
+# NOTE: no "License :: OSI Approved :: ..." classifier - PyPI rejects license
+# classifiers when a PEP 639 SPDX `license` expression is present.
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Hydrology",
 ]
+
+# Runtime dependencies. `pyarrow` belongs here rather than in an extra: the
+# PandasForecast parquet round-trip (forecast_performance/pandas_forecast.py)
+# imports it, so a plain install would otherwise ship a broken feature.
+# seaborn / ipympl / ipywidgets are NOT runtime dependencies - the library never
+# imports them (`template="seaborn"` in plotly_forecasting.py is a *plotly*
+# template name). They are notebook tooling and live in the `dev` extra.
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
     "scipy>=1.10",
     "matplotlib>=3.7",
-    "seaborn>=0.12",
-    "ipympl",
-    "ipywidgets",
-    "plotly",
+    "plotly>=5.0",
+    "pyarrow>=14",
 ]
 
-[project.urls]
-Homepage = "https://foresight.tecnico.ulisboa.pt/"
-
 [project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
+build = ["build>=1.0", "twine>=4.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "jupyter>=1.0",
-    "ipykernel>=6.0",
-    "pyarrow",
-    "fastparquet",
-]
-build = [
     "build>=1.0",
     "twine>=4.0",
+    "jupyter>=1.0",
+    "ipykernel>=6.0",
+    "ipympl",
+    "ipywidgets",
+    "seaborn>=0.12",
+    "fastparquet",
 ]
+
+[project.urls]
+Homepage = "https://github.com/FORESIGHT-ULisboa/forecast_performance"
+Repository = "https://github.com/FORESIGHT-ULisboa/forecast_performance"
+Issues = "https://github.com/FORESIGHT-ULisboa/forecast_performance/issues"
+Changelog = "https://github.com/FORESIGHT-ULisboa/forecast_performance/releases"
+"FORESIGHT" = "https://foresight.tecnico.ulisboa.pt/"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["performance*"]
+include = ["forecast_performance*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
 
 [tool.coverage.run]
-source = ["performance"]
+source = ["forecast_performance"]
 omit = ["tests/*"]

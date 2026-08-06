@@ -1,4 +1,4 @@
-﻿"""
+"""
 ForecastPerformance - main class for evaluating deterministic and
 probabilistic weather / hydrological forecasts.
 """
@@ -561,7 +561,7 @@ class ForecastPerformance:
         """
         Clear cached intermediate results (e.g. PIT p-values).
 
-        The :func:`~performance.storedResults` decorator caches per-leadtime
+        The :func:`~forecast_performance.storedResults` decorator caches per-leadtime
         intermediates in ``self.results[name]``; clearing forces recomputation
         on the next metric call. This does **not** remove the simulation data.
 

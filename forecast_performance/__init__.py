@@ -1,4 +1,4 @@
-﻿"""
+"""
 forecast_performance
 ====================
 
@@ -6,7 +6,7 @@ Evaluate deterministic, ensemble and probabilistic forecasts.
 
 Quick start
 -----------
->>> from performance import ForecastPerformance, rmse
+>>> from forecast_performance import ForecastPerformance, rmse
 >>> fp = ForecastPerformance(reference_series)
 >>> fp.add(forecast_df, name='my_model')
 >>> fp.deterministic(rmse, 'my_model')      # handle
@@ -43,7 +43,7 @@ from .metrics import (                                  # noqa: F401
     fair_brier_skill_score,
 )
 
-__version__ = "0.7.0"
+__version__ = "1.0.0"
 __all__ = [
     "ForecastPerformance",
     "PandasForecast",

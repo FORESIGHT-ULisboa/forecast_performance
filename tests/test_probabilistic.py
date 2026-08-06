@@ -1,9 +1,9 @@
-"""Tests for pure probabilistic metric functions in performance.metrics.probabilistic."""
+"""Tests for pure probabilistic metric functions in forecast_performance.metrics.probabilistic."""
 
 import numpy as np
 import pytest
 
-from performance.metrics.probabilistic import (
+from forecast_performance.metrics.probabilistic import (
     quantile_loss,
     p_values_ensemble,
     p_values_probabilistic,

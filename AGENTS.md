@@ -9,8 +9,8 @@ Copilot, etc.) working in this repository. `CLAUDE.md` and
 `forecast_performance` evaluates the skill of **deterministic**, **ensemble**
 and **probabilistic** forecasts against a reference (observation) series. The
 public surface is the `ForecastPerformance` class in
-[performance/forecast_performance.py](performance/forecast_performance.py); pure
-metric functions live in [performance/metrics/](performance/metrics/).
+[forecast_performance/forecast_performance.py](forecast_performance/forecast_performance.py); pure
+metric functions live in [forecast_performance/metrics/](forecast_performance/metrics/).
 
 ## Environment
 
@@ -23,9 +23,55 @@ metric functions live in [performance/metrics/](performance/metrics/).
   may not be on `PATH`; if so, either activate the env in a conda-aware shell
   or call that `python.exe` directly. Prefer `conda activate forecast_performance`
   when `conda` is available.
-- Setup: `pip install -e ".[dev]"` (pulls `pyarrow`/`fastparquet`, needed to
-  read the test parquet datasets).
+- Setup: `pip install -e ".[dev]"`. `pyarrow` is a **runtime** dependency (the
+  `PandasForecast` parquet path imports it), so it arrives with a plain install;
+  the `dev` extra adds `fastparquet` (alternative engine), Jupyter and the
+  notebook widgets. `pip install -e ".[test]"` is the lighter set CI uses.
 - Run tests with `pytest tests/ -v`.
+
+## Build / test / release
+
+Published on PyPI as **`forecast-performance`** (`pip install
+forecast-performance`); the **import** package is `forecast_performance`. It was
+renamed from `performance` in 1.0.0 — a plain `import performance` no longer works.
+
+Releases are cut by
+[.github/workflows/release.yml](.github/workflows/release.yml) on a `vX.Y.Z` tag
+push: it verifies the version declarations agree with the tag, builds, runs
+`twine check --strict`, publishes to PyPI, and attaches both artifacts to the
+GitHub release. A manual run from the Actions tab targets TestPyPI by default, for
+rehearsal. [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the
+suite on push and pull request against Python 3.11 and 3.12.
+
+Releasing is therefore: bump the version in **both** places, commit,
+`git tag vX.Y.Z`, `git push origin vX.Y.Z`. Nothing is uploaded by hand.
+**PyPI versions are immutable** — a number can never be reused, even after
+deletion — so a failing version guard is a hard stop, not a nuisance, and a pushed
+tag is never moved or re-pointed.
+
+The version lives in **two** places that must be bumped together:
+`pyproject.toml` (`project.version`) and `forecast_performance.__version__`
+([forecast_performance/__init__.py](forecast_performance/__init__.py)).
+[.github/scripts/check_version.py](.github/scripts/check_version.py) enforces this
+(plus tag agreement) before anything is published.
+
+Build output is **not** committed: `dist/` (local builds) and `dist-release/` (what
+CI builds and publishes) are both gitignored. CI deliberately builds into
+`dist-release/` so a stale local `dist/` can never be graded or uploaded.
+
+### One-time PyPI setup (Trusted Publishing)
+
+Authentication is OIDC; **no API tokens exist in the repository or in secrets, and
+none should be added** — see [README.md](README.md#one-time-setup-maintainers) for
+the registration steps and the reasoning. Two constraints matter when touching the
+workflow:
+
+- The environment names (`pypi` / `testpypi`) are part of what PyPI verifies.
+  Renaming a job's `environment:` key without re-registering the publisher breaks
+  the OIDC exchange.
+- `id-token: write` belongs only to the publish jobs. The build job stays
+  `contents: read`, so the job that produces artifacts never holds the identity
+  that can upload them.
 
 ## Canonical long format
 
@@ -54,7 +100,7 @@ Seasonal/monthly forecasts express `leadtime` as a `pd.DateOffset`
 calendar months/years have variable length and must be *added to a production
 date*. Parquet (pyarrow/fastparquet) **cannot serialize `DateOffset`** objects in
 an index or columns. `PandasForecast`
-([performance/pandas_forecast.py](performance/pandas_forecast.py)) is a
+([forecast_performance/pandas_forecast.py](forecast_performance/pandas_forecast.py)) is a
 `pd.DataFrame` subclass that fixes this:
 
 - `PandasForecast(df).to_parquet(path)` finds the `leadtime` level (index **or**
@@ -134,14 +180,14 @@ no-op.
 ## The metric system
 
 - Every public metric is a `Metric` (see
-  [performance/metrics/base.py](performance/metrics/base.py)) — a `str`
+  [forecast_performance/metrics/base.py](forecast_performance/metrics/base.py)) — a `str`
   subclass that is also callable. It **equals and stringifies to its own
   name**: `str(rmse) == rmse == "rmse"`, `rmse.__name__ == "rmse"`, and
   `rmse(forecast, obs)` still works.
 - Because of this, never write `metric.__name__` when building a `Results`
   table — append the `Metric` object directly and it stores as the name.
 - `deterministic` and `probabilistic` are **callable accessors** (see
-  [performance/metrics/accessors.py](performance/metrics/accessors.py)) set on
+  [forecast_performance/metrics/accessors.py](forecast_performance/metrics/accessors.py)) set on
   each instance. All three styles are equivalent and supported — keep them
   symmetric when adding metrics:
   ```python
@@ -153,7 +199,7 @@ no-op.
   `_apply_probabilistic` methods on the class; resolution of handle-or-name is
   done by `_resolve_deterministic_metric` / `_resolve_probabilistic_metric`
   against the `DETERMINISTIC_METRICS` / `PROBABILISTIC_METRICS` registries in
-  [performance/metrics/__init__.py](performance/metrics/__init__.py).
+  [forecast_performance/metrics/__init__.py](forecast_performance/metrics/__init__.py).
 - Every metric — deterministic **and** probabilistic — is also exposed as a
   convenience **handle attribute** on the instance/class under its common-usage
   name (acronyms uppercased like `fp.RMSE`, `fp.NSE`, `fp.KGEprime`, `fp.CRPS`,
@@ -172,7 +218,7 @@ no-op.
    aliases.
 2. Add it to the `DETERMINISTIC` / `PROBABILISTIC` ordered list (this builds the
    registry automatically).
-3. Export it from `metrics/__init__.py` and `performance/__init__.py`.
+3. Export it from `metrics/__init__.py` and `forecast_performance/__init__.py`.
 4. Add an explicit per-metric method on the matching accessor in
    `metrics/accessors.py` (so editors autocomplete it and its kwargs).
 5. Add a convenience handle attribute on `ForecastPerformance` under its
@@ -182,9 +228,9 @@ no-op.
 
 ## Caching, results, baselines
 
-- `Results` ([performance/results.py](performance/results.py)) is a simple
+- `Results` ([forecast_performance/results.py](forecast_performance/results.py)) is a simple
   accumulator: `append(**fields)` then `to_pandas(index=[...], columns=[...])`.
-- `storedResults` ([performance/decorators.py](performance/decorators.py))
+- `storedResults` ([forecast_performance/decorators.py](forecast_performance/decorators.py))
   caches per-leadtime intermediates (PIT p-values) in
   `fp.results[name][func][leadtime]`. The cache is **bypassed** when `threshold`
   or `months` is supplied. Use `fp.clear_cache(name=None)` to drop cached
@@ -205,7 +251,7 @@ no-op.
 ## Visualisation
 
 - `fp.qq_plot(...)` is matplotlib-based.
-- [performance/plotly_forecasting.py](performance/plotly_forecasting.py)
+- [forecast_performance/plotly_forecasting.py](forecast_performance/plotly_forecasting.py)
   provides Plotly helpers (`plot_lt_*`, `plot_pd_*`, `add_observed_trace`,
   `apply_default_layout`, colour helpers). Plotting tests run headless: set the
   matplotlib `Agg` backend and inspect `fig.data` / `fig.layout` rather than
@@ -222,6 +268,12 @@ no-op.
   and the cache tests in
   [tests/test_forecast_performance.py](tests/test_forecast_performance.py)
   passing.
+- **The sdist ships the library only** — [MANIFEST.in](MANIFEST.in) prunes
+  `tests/`, which is ~34 MB of parquet. Before being tempted to
+  `recursive-include tests`: only `tests/test_datasets_daily/` is read by the suite
+  (`conftest.py`); `tests/test_datasets_hourly/` is 27 MB read by **no test at
+  all**, only by its own aux notebook. A partially shipped suite is worse than
+  none, because it looks runnable and is not.
 
 ## Style
 
@@ -229,4 +281,8 @@ no-op.
   `KGE`, `KGEprime`, …) are kept for backward compatibility — preserve them.
 - Line length 88; the repo uses `black` (`editor.formatOnSave` is on).
 - Don't break the public re-exports in
-  [performance/__init__.py](performance/__init__.py).
+  [forecast_performance/__init__.py](forecast_performance/__init__.py).
+- **Licensed MIT.** The license is declared as a PEP 639 SPDX expression
+  (`license = "MIT"` plus `license-files`), which is why `build-system.requires`
+  pins `setuptools>=77` and why there is **no** `License :: OSI Approved :: ...`
+  classifier — PyPI rejects metadata carrying both.

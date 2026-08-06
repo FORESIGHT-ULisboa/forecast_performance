@@ -1,0 +1,10 @@
+# tests/ carries ~34 MB of parquet fixtures that conftest.py needs, so the suite
+# cannot be shipped usefully: including only the .py files leaves it unrunnable,
+# and including the data would bloat every download. `prune` is required rather
+# than simply omitting them - a distutils default otherwise pulls tests/test*.py
+# into the sdist. Run the tests from a repository clone; see README, "Running the
+# tests".
+#
+# notebooks/ needs no rule: nothing there is matched by a default, and a `prune`
+# on an already-empty match warns on every build.
+prune tests

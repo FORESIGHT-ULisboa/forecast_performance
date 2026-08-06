@@ -9,3 +9,6 @@ Key reminders:
   name, and `fp.deterministic.rmse(...)` styles must stay equivalent.
 - Use the `forecast_performance` conda environment for code, tests, and
   notebooks. Run tests with `pytest tests/ -v`.
+- Releases go through `.github/workflows/release.yml` on a `vX.Y.Z` tag push.
+  Bump the version in **both** `pyproject.toml` and
+  `forecast_performance/__init__.py`; never `twine upload` by hand.

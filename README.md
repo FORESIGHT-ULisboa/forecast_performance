@@ -1,21 +1,31 @@
+<!-- The image and the notebook links below use absolute URLs on purpose: this
+     README is the PyPI long_description, and PyPI resolves nothing
+     repo-relative, so relative paths would render as broken links there. -->
 <p align="center">
-  <img src="notebooks/foresight.png" alt="FORESIGHT" width="320">
+  <img src="https://raw.githubusercontent.com/FORESIGHT-ULisboa/forecast_performance/main/notebooks/foresight.png" alt="FORESIGHT" width="320">
 </p>
 
 # Forecast Performance
+
+<p align="center">
+  <a href="https://pypi.org/project/forecast-performance/"><img src="https://img.shields.io/pypi/v/forecast-performance.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/forecast-performance/"><img src="https://img.shields.io/pypi/pyversions/forecast-performance.svg" alt="Supported Python versions"></a>
+  <a href="https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 **`forecast_performance`** is a Python library created by [FORESIGHT - Forecasting and Optimization for Resilient Environmental Systems through Investigation with Groundbreaking Hydrological Tools](https://foresight.tecnico.ulisboa.pt/) for evaluating the skill of
 deterministic and probabilistic forecasting models.  It provides a single
 unified interface — `ForecastPerformance` — that handles point, quantile, and
 ensemble forecasts and exposes a rich set of metrics and visualisation tools.
 
-> **New here? Start with the notebooks** in [`notebooks/`](notebooks/), each a
-> self-contained, runnable walkthrough:
-> [`00_visualize`](notebooks/00_visualize.ipynb) (Plotly forecast plots) ·
-> [`01_benchmarks`](notebooks/01_benchmarks.ipynb) (persistence & climatology
-> baselines) · [`02_deterministic`](notebooks/02_deterministic.ipynb) ·
-> [`03_ensemble`](notebooks/03_ensemble.ipynb) ·
-> [`04_probabilistic`](notebooks/04_probabilistic.ipynb). Run them under the
+> **New here? Start with the notebooks** in
+> [`notebooks/`](https://github.com/FORESIGHT-ULisboa/forecast_performance/tree/main/notebooks),
+> each a self-contained, runnable walkthrough:
+> [`00_visualize`](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/notebooks/00_visualize.ipynb) (Plotly forecast plots) ·
+> [`01_benchmarks`](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/notebooks/01_benchmarks.ipynb) (persistence & climatology
+> baselines) · [`02_deterministic`](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/notebooks/02_deterministic.ipynb) ·
+> [`03_ensemble`](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/notebooks/03_ensemble.ipynb) ·
+> [`04_probabilistic`](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/notebooks/04_probabilistic.ipynb). Run them under the
 > `forecast_performance` kernel (see [Installation](#installation)).
 
 ---
@@ -37,16 +47,33 @@ ensemble forecasts and exposes a rich set of metrics and visualisation tools.
 
 ## Installation
 
-Two paths: install a **released wheel** (use the package), or install **from
-source** (develop / run the notebooks and tests).
+Two paths: install the **released package from PyPI** (use the package), or
+install **from source** (develop / run the notebooks and tests).
 
-### A · Install the v0.6.0 release
-
-The runtime dependencies (numpy, pandas, scipy, matplotlib, seaborn, plotly, …)
-are declared in the wheel, so pip resolves them automatically.
+### A · Install from PyPI
 
 ```bat
-pip install https://github.com/FORESIGHT-ULisboa/forecast_performance/releases/download/v0.6.0/forecast_performance-0.6.0-py3-none-any.whl
+pip install forecast-performance
+```
+
+That is all — the runtime dependencies (numpy, pandas, scipy, matplotlib, plotly,
+pyarrow) are declared in the wheel, so pip resolves them automatically. Upgrading
+later needs no URL: `pip install --upgrade forecast-performance` always picks up
+the newest release.
+
+> The **distribution** is `forecast-performance`; the **import** is
+> `forecast_performance`:
+>
+> ```python
+> from forecast_performance import ForecastPerformance
+> ```
+
+Every release is also attached to the
+[GitHub releases page](https://github.com/FORESIGHT-ULisboa/forecast_performance/releases),
+which is useful to pin an exact build without going through PyPI:
+
+```bat
+pip install https://github.com/FORESIGHT-ULisboa/forecast_performance/releases/download/v1.0.0/forecast_performance-1.0.0-py3-none-any.whl
 ```
 
 ### B · Install from source (development)
@@ -145,7 +172,7 @@ each `DateOffset` in a `leadtime` level (whether in the index **or** the columns
 on write and restores it on read.  Use it exactly like a `DataFrame`:
 
 ```python
-from performance import PandasForecast
+from forecast_performance import PandasForecast
 
 PandasForecast(df).to_parquet("forecast.parquet")     # df has a DateOffset leadtime
 back = PandasForecast.read_parquet("forecast.parquet")  # plain DataFrame by default
@@ -166,7 +193,7 @@ readable by plain `pd.read_parquet` (the leadtime then holds the encoded strings
 ```python
 import pandas as pd
 import numpy as np
-from performance import ForecastPerformance, rmse, nse, crps
+from forecast_performance import ForecastPerformance, rmse, nse, crps
 
 dates = pd.date_range("2020-01-01", periods=365, freq="D")
 reference = pd.Series(
@@ -239,7 +266,7 @@ fp.probabilistic.brier_score("ens_model", leadtime=pd.Timedelta("0D"), threshold
 stringify to their name, append the metric object directly:
 
 ```python
-from performance import Results
+from forecast_performance import Results
 
 results = Results("Model", "Metric", "Leadtime")
 for name in fp.names():
@@ -273,7 +300,7 @@ fp.remove("climatology")        # delete a simulation entirely
 
 ```python
 import plotly.graph_objects as go
-from performance import plotly_forecasting as gof
+from forecast_performance import plotly_forecasting as gof
 
 fp.qq_plot("prob_model")        # PIT / Q-Q calibration plot (matplotlib)
 
@@ -289,7 +316,7 @@ gof.apply_default_layout(fig, yaxis_title="Q [m3/s]")
 
 ```
 forecast_performance/
-├── performance/
+├── forecast_performance/
 │   ├── __init__.py                 # Public re-exports (metrics, Metric, registries)
 │   ├── forecast_performance.py     # ForecastPerformance main class
 │   ├── pandas_forecast.py          # PandasForecast (DateOffset-aware parquet I/O)
@@ -317,13 +344,17 @@ forecast_performance/
 │   ├── test_results.py
 │   ├── test_plotting.py
 │   ├── test_missing_data.py
-│   ├── test_datasets_daily/        # obs/det/ens/prob parquet datasets
-│   └── test_datasets_hourly/
+│   ├── test_datasets_daily/        # obs/det/ens/prob parquet datasets (used by conftest)
+│   └── test_datasets_hourly/       # only used by its own aux notebook
 ├── AGENTS.md                       # conventions for AI coding agents (canonical)
 ├── CLAUDE.md                       # → points to AGENTS.md
 ├── .github/copilot-instructions.md # → points to AGENTS.md
-├── pyproject.toml
-├── LICENSE
+├── .github/workflows/tests.yml     # pytest on push / PR (3.11, 3.12)
+├── .github/workflows/release.yml   # build + publish to PyPI on tag push
+├── .github/scripts/check_version.py # release guard: version declared consistently
+├── pyproject.toml                  # packaging + pytest/coverage configuration
+├── MANIFEST.in                     # keeps the 34 MB tests/ tree out of the sdist
+├── LICENSE                         # MIT
 └── README.md
 ```
 
@@ -334,6 +365,13 @@ forecast_performance/
 ```bash
 pytest tests/ -v
 ```
+
+The suite also runs in CI on every push and pull request
+([.github/workflows/tests.yml](.github/workflows/tests.yml)) against Python 3.11
+and 3.12.
+
+> The tests are **not** shipped in the PyPI sdist — their parquet fixtures are
+> ~34 MB. Clone the repository, or download a tagged source archive, to run them.
 
 ---
 
@@ -353,28 +391,112 @@ This produces both artifacts in `dist/`:
 
 ```
 dist/
-├── forecast_performance-0.6.0-py3-none-any.whl
-└── forecast_performance-0.6.0.tar.gz
+├── forecast_performance-1.0.0-py3-none-any.whl
+└── forecast_performance-1.0.0.tar.gz
 ```
 
 Install the wheel anywhere (no source checkout needed):
 
 ```bat
-pip install dist/forecast_performance-0.6.0-py3-none-any.whl
+pip install dist/forecast_performance-1.0.0-py3-none-any.whl
 ```
 
-Optionally check the metadata and (if you publish) upload with `twine`:
+Check the metadata the way CI does:
 
 ```bat
-twine check dist/*
-twine upload dist/*        # requires PyPI credentials
+twine check --strict dist/*
 ```
 
 Notes:
 - The version is set in [pyproject.toml](pyproject.toml) (`project.version`) and
-  mirrored in `performance.__version__` — bump both together.
-- Only the `performance` package is shipped; the `tests/` datasets and notebooks
-  are excluded from the wheel.
+  mirrored in `forecast_performance.__version__` — bump both together.
+  [.github/scripts/check_version.py](.github/scripts/check_version.py) enforces
+  that at release time.
+- Only the `forecast_performance` package is shipped. [MANIFEST.in](MANIFEST.in)
+  prunes `tests/`, whose parquet fixtures are ~34 MB.
+- Building by hand is only needed to inspect an artifact locally, and **never
+  `twine upload` by hand** — releases are produced by CI, which builds into
+  `dist-release/` so the two never mix. See [Releasing](#releasing) below.
+
+---
+
+## Releasing
+
+Releases are automated by
+[.github/workflows/release.yml](.github/workflows/release.yml). To cut version
+`X.Y.Z`:
+
+1. Bump the version in **both** [pyproject.toml](pyproject.toml) and
+   `forecast_performance.__version__`, refresh the pinned wheel URL under
+   [Installation A](#a--install-from-pypi), then commit.
+2. Rehearse if you want to: run the workflow from the **Actions** tab and leave the
+   target as `testpypi`. It builds and uploads to
+   [TestPyPI](https://test.pypi.org/project/forecast-performance/), no tag needed,
+   and reruns are idempotent.
+3. Tag and push:
+
+   ```bat
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The workflow then verifies the two version declarations agree with the tag, builds
+the wheel and sdist, runs `twine check --strict`, publishes to
+[PyPI](https://pypi.org/project/forecast-performance/), and attaches both artifacts
+to the GitHub release.
+
+> **PyPI uploads are immutable** — a version number can never be reused, even after
+> deletion. Get the version right before pushing the tag, and never move or
+> re-point a tag that has already been pushed. If a version has been consumed, bump
+> and tag again.
+
+### One-time setup (maintainers)
+
+Publishing is authenticated with
+[PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC):
+GitHub mints a short-lived credential at publish time that PyPI accepts only for
+this repository, this workflow file and this environment. **No API token is
+created, stored or pasted anywhere.** Every value below is a public fact about the
+repository — none of it is a secret, which is precisely the point.
+
+**On PyPI** — once per index (repeat on [TestPyPI](https://test.pypi.org/) for the
+rehearsal path):
+
+1. *Your account → Publishing → Add a pending publisher* → GitHub, and fill in:
+
+   | Field | Value |
+   |---|---|
+   | PyPI project name | `forecast-performance` |
+   | Owner | `FORESIGHT-ULisboa` |
+   | Repository | `forecast_performance` |
+   | Workflow name | `release.yml` |
+   | Environment | `pypi` (on TestPyPI: `testpypi`) |
+
+   The environment name must match the `environment:` key of the corresponding job
+   in [release.yml](.github/workflows/release.yml), or PyPI rejects the exchange. A
+   *pending* publisher is what you register before the project exists on an index;
+   it turns into an ordinary one on the first successful upload.
+
+**On GitHub** — once:
+
+2. *Settings → Environments* → create `pypi` (and `testpypi`).
+3. Add a **required reviewer** to `pypi`. Every publish then pauses for an explicit
+   approval, so a tag push alone cannot ship.
+
+Things worth keeping that way:
+
+- **Do not add a PyPI API token to repository secrets.** Trusted Publishing exists
+  to remove that long-lived credential; a token in secrets is usable by any
+  workflow in the repository and stays valid until someone revokes it. Nothing here
+  needs one.
+- The publisher trusts the workflow **by filename**, so anyone able to change
+  [release.yml](.github/workflows/release.yml) or push a `v*` tag can trigger a
+  publish. Protect `main` and restrict who may push tags; the environment reviewer
+  from step 3 is the backstop.
+- Only the two publish jobs request `id-token: write`; the build job is
+  `contents: read` and the workflow default is `permissions: {}`. Keep that split
+  when editing it — the job that produces the artifacts never holds the identity
+  that can upload them.
 
 ---
 
@@ -492,12 +614,12 @@ evaluation to specific calendar months.
   `KGE`, `KGEprime`, …) are retained for backward compatibility.
 - `DETERMINISTIC_METRICS` / `PROBABILISTIC_METRICS` are dicts mapping every name
   **and** alias (case-insensitive) to its `Metric`; `DETERMINISTIC` /
-  `PROBABILISTIC` are the ordered lists. All are importable from `performance`.
+  `PROBABILISTIC` are the ordered lists. All are importable from `forecast_performance`.
 
 ### `Results`
 
 ```python
-from performance import Results, rmse
+from forecast_performance import Results, rmse
 
 r = Results("Model", "Metric")
 r.append(Model="A", Metric=rmse, Value=0.12)   # Metric stringifies to "rmse"
@@ -511,7 +633,7 @@ df = r.to_pandas(index=["Model"], columns=["Metric"])
 | `append(**values)` | Append one row (one keyword per field plus `Value`). |
 | `to_pandas(index=None, columns=None)` | Pivot to a multi-indexed `DataFrame`; `index`/`columns` select which fields become row/column levels. |
 
-### Visualisation helpers (`performance.plotly_forecasting`)
+### Visualisation helpers (`forecast_performance.plotly_forecasting`)
 
 Plotly helpers that take a `go.Figure` and a canonical long-format frame:
 
@@ -561,4 +683,5 @@ supplied. Clear with `fp.clear_cache(...)`.
 
 ## License
 
-See [LICENSE](LICENSE).
+Licensed under the **MIT License** — see
+[LICENSE](https://github.com/FORESIGHT-ULisboa/forecast_performance/blob/main/LICENSE).
